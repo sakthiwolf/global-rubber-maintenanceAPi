@@ -8,4 +8,12 @@ namespace GlobalRubber.MMM.Domain.Constants;
 public static class DocumentTypes
 {
     public const string User = "USER";
+    public const string Department = "DEPARTMENT";
+    public const string Employee = "EMPLOYEE";
+    public const string Vendor = "VENDOR";
+    public const string Product = "PRODUCT";
+    public const string Machine = "MACHINE";
+    public const string Mold = "MOLD";
+    public const string MaintenanceType = "MAINTENANCE_TYPE";
+    public const string SparePart = "SPARE_PART";
 }

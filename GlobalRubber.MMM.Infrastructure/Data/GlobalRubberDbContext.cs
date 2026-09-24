@@ -19,6 +19,14 @@ public class GlobalRubberDbContext : DbContext
     public DbSet<Module> Modules => Set<Module>();
     public DbSet<Permission> Permissions => Set<Permission>();
     public DbSet<User> Users => Set<User>();
+    public DbSet<Department> Departments => Set<Department>();
+    public DbSet<Employee> Employees => Set<Employee>();
+    public DbSet<Vendor> Vendors => Set<Vendor>();
+    public DbSet<Product> Products => Set<Product>();
+    public DbSet<Machine> Machines => Set<Machine>();
+    public DbSet<Mold> Molds => Set<Mold>();
+    public DbSet<MaintenanceType> MaintenanceTypes => Set<MaintenanceType>();
+    public DbSet<SparePart> SpareParts => Set<SparePart>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<AuditLogDetail> AuditLogDetails => Set<AuditLogDetail>();
     public DbSet<ApplicationLog> ApplicationLogs => Set<ApplicationLog>();

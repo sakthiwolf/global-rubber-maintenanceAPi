@@ -48,6 +48,14 @@ public static class DependencyInjection
         services.AddScoped<IDocumentSequenceGenerator, DocumentSequenceGenerator>();
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IRoleRepository, RoleRepository>();
+        services.AddScoped<IDepartmentRepository, DepartmentRepository>();
+        services.AddScoped<IEmployeeRepository, EmployeeRepository>();
+        services.AddScoped<IVendorRepository, VendorRepository>();
+        services.AddScoped<IProductRepository, ProductRepository>();
+        services.AddScoped<IMachineRepository, MachineRepository>();
+        services.AddScoped<IMoldRepository, MoldRepository>();
+        services.AddScoped<IMaintenanceTypeRepository, MaintenanceTypeRepository>();
+        services.AddScoped<ISparePartRepository, SparePartRepository>();
         services.AddScoped<IPermissionRepository, PermissionRepository>();
         services.AddScoped<IAuditLogRepository, AuditLogRepository>();
         services.AddScoped<IApplicationLogRepository, ApplicationLogRepository>();

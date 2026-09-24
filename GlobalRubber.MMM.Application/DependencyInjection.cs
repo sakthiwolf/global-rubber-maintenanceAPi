@@ -15,6 +15,14 @@ public static class DependencyInjection
     {
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IRoleService, RoleService>();
+        services.AddScoped<IDepartmentService, DepartmentService>();
+        services.AddScoped<IEmployeeService, EmployeeService>();
+        services.AddScoped<IVendorService, VendorService>();
+        services.AddScoped<IProductService, ProductService>();
+        services.AddScoped<IMachineService, MachineService>();
+        services.AddScoped<IMoldService, MoldService>();
+        services.AddScoped<IMaintenanceTypeService, MaintenanceTypeService>();
+        services.AddScoped<ISparePartService, SparePartService>();
         services.AddScoped<IPermissionService, PermissionService>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IPermissionAuthorizationService, PermissionAuthorizationService>();
