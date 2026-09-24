@@ -1,0 +1,1158 @@
+# Global Rubber MMM — Development Instructions
+
+## 1. Project Overview
+
+Project Name:
+
+Global Rubber — Machine & Mold Maintenance (MMM)
+
+Database:
+
+CHE_WA_Global Rubber MMM
+
+Technology:
+
+- Backend: ASP.NET Core 8 Web API
+- ORM: Entity Framework Core
+- Database: Microsoft SQL Server
+- Architecture: Clean Architecture
+- API Documentation: Swagger / OpenAPI
+- Authentication: JWT
+- Frontend: React + TypeScript
+- Database schemas:
+  - security
+  - configuration
+  - masters
+  - transactions
+  - audit
+
+This project is a Machine & Mold Maintenance Management system for Global Rubber.
+
+---
+
+# 2. MOST IMPORTANT DEVELOPMENT RULE
+
+DO NOT invent business requirements.
+
+The existing React template and:
+
+docs/GlobalRubber_MMM_System_Analysis.md
+
+are the primary functional references.
+
+The database design is already created.
+
+Before implementing any functionality:
+
+1. Check the existing analysis.
+2. Check the database design.
+3. Check the existing template behavior.
+4. Identify the exact business rule.
+5. Implement only what is supported.
+6. If the requirement is unclear, STOP and ask/document the question.
+
+Never silently create a new business rule.
+
+---
+
+# 3. CURRENT PROJECT STATUS
+
+Database design and creation are completed.
+
+Database:
+
+CHE_WA_Global Rubber MMM
+
+Database schemas:
+
+security
+configuration
+masters
+transactions
+audit
+
+Database contains 31 tables.
+
+Database naming convention:
+
+- *_master
+- *_transaction
+- *_configuration
+- audit/log tables
+
+Examples:
+
+security.user_master
+security.role_master
+security.module_master
+security.permission_master
+
+masters.machine_master
+masters.mold_master
+masters.product_master
+
+transactions.production_entry_transaction
+transactions.machine_breakdown_transaction
+transactions.maintenance_work_order_transaction
+
+audit.audit_log
+audit.application_log
+
+DO NOT redesign or recreate the database unless specifically requested.
+
+---
+
+# 4. DATABASE IS THE BASELINE
+
+The existing database is the approved database baseline.
+
+Do not:
+
+- Rename existing tables
+- Rename existing columns
+- Change primary keys
+- Change business-code formats
+- Add unnecessary tables
+- Remove tables
+- Add new business workflows
+- Add new master modules
+- Add unrelated ERP functionality
+
+without first explaining why the change is required.
+
+If a database change is genuinely required, document it before implementing it.
+
+---
+
+# 5. BUSINESS ID FORMAT
+
+Business identifiers are separate from internal primary keys.
+
+Examples:
+
+USR-0001
+MAC-0001
+MLD-0001
+PRD-0001
+DEP-0001
+EMP-0001
+VND-0001
+SPR-0001
+
+Transaction numbers use their configured formats.
+
+Do not replace business codes with database IDs.
+
+Do not expose internal database IDs as the primary user-facing identifier where a business code exists.
+
+---
+
+# 6. ARCHITECTURE
+
+Use Clean Architecture.
+
+Solution:
+
+GlobalRubber.MMM.sln
+
+Projects:
+
+src/
+├── GlobalRubber.MMM.Api
+├── GlobalRubber.MMM.Application
+├── GlobalRubber.MMM.Domain
+└── GlobalRubber.MMM.Infrastructure
+
+tests/
+├── GlobalRubber.MMM.Application.Tests
+└── GlobalRubber.MMM.Api.Tests
+
+Dependency direction:
+
+Api
+ ↓
+Application
+ ↓
+Domain
+
+Infrastructure
+ ↓
+Application
+ ↓
+Domain
+
+Domain must not depend on:
+
+- API
+- Infrastructure
+- EF Core
+- ASP.NET Core
+
+Application must not depend on:
+
+- Controllers
+- HTTP-specific implementation
+- Infrastructure implementations
+
+---
+
+# 7. PROJECT STRUCTURE
+
+Use the following structure as the starting point.
+
+## Api
+
+GlobalRubber.MMM.Api/
+
+├── Controllers/
+├── Middleware/
+├── Extensions/
+├── Filters/
+├── Health/
+├── Configuration/
+├── Program.cs
+└── appsettings.json
+
+## Application
+
+GlobalRubber.MMM.Application/
+
+├── Common/
+│   ├── Models/
+│   ├── Responses/
+│   ├── Pagination/
+│   ├── Exceptions/
+│   └── Interfaces/
+├── Features/
+│   ├── Authentication/
+│   ├── Users/
+│   ├── Roles/
+│   ├── Modules/
+│   └── Permissions/
+└── DependencyInjection.cs
+
+## Domain
+
+GlobalRubber.MMM.Domain/
+
+├── Entities/
+├── Enums/
+├── Constants/
+└── Common/
+
+## Infrastructure
+
+GlobalRubber.MMM.Infrastructure/
+
+├── Persistence/
+│   ├── Context/
+│   ├── Configurations/
+│   ├── Repositories/
+│   └── Migrations/
+├── Authentication/
+├── Logging/
+├── Services/
+└── DependencyInjection.cs
+
+---
+
+# 8. IMPLEMENTATION ORDER
+
+Always implement functionality in this order:
+
+1. Requirement analysis
+2. Entity/domain model if required
+3. DTO
+4. Repository interface
+5. Repository implementation
+6. Service interface
+7. Service implementation
+8. Controller
+9. Validation
+10. Swagger documentation
+11. Build
+12. Test
+13. Review against the React template
+14. Only then move to the next function
+
+Do not implement an entire module blindly.
+
+---
+
+# 9. ONE FUNCTION / ONE ENDPOINT RULE
+
+Implement one endpoint/function at a time.
+
+Example:
+
+User module:
+
+1. Get Users
+2. Get User By ID
+3. Create User
+4. Update User
+5. Activate/Deactivate User
+
+Do not create all functionality at once without validation.
+
+After each endpoint:
+
+- Build
+- Test
+- Check SQL generated by EF Core where necessary
+- Verify response contract
+- Verify authorization
+- Compare behavior with requirements
+
+---
+
+# 10. FIRST BACKEND PHASE
+
+Before implementing business modules, create the backend foundation.
+
+Required:
+
+- ASP.NET Core 8 API
+- Clean Architecture
+- SQL Server connection
+- EF Core
+- DbContext
+- Dependency Injection
+- Global exception handling
+- ApiResponse
+- ApiResponse<T>
+- Pagination
+- Swagger
+- API health check
+- Database health check
+- Logging
+- Correlation ID
+- CORS
+- Configuration management
+- JWT authentication foundation
+
+Do not implement Machine/Mold transactions yet.
+
+---
+
+# 11. RESPONSE STANDARD
+
+Use a consistent API response.
+
+Preferred structure:
+
+ApiResponse<T>
+
+Example:
+
+{
+  "success": true,
+  "message": "Request completed successfully.",
+  "data": {}
+}
+
+For errors:
+
+{
+  "success": false,
+  "message": "An error occurred.",
+  "data": null
+}
+
+Do not create different response formats for every controller.
+
+If an existing response contract already exists, preserve it.
+
+---
+
+# 12. PAGINATION
+
+List APIs must support pagination where the screen requires it.
+
+Preferred request:
+
+pageNumber
+pageSize
+
+Preferred response:
+
+data
+pageNumber
+pageSize
+totalRecords
+totalPages
+
+Do not load an entire large table into memory just to paginate it in application code.
+
+Use database-side pagination.
+
+For EF Core:
+
+Skip()
+Take()
+
+or an equivalent efficient implementation.
+
+---
+
+# 13. ASYNC / CANCELLATION
+
+All asynchronous operations must use:
+
+CancellationToken
+
+Example:
+
+Task<ApiResponse<T>> GetSomethingAsync(
+    CancellationToken cancellationToken);
+
+Pass the token through:
+
+Controller
+→ Service
+→ Repository
+→ EF Core
+
+Do not ignore cancellation tokens.
+
+---
+
+# 14. EF CORE
+
+Use EF Core for standard database operations.
+
+Prefer:
+
+LINQ
+Include
+AsNoTracking
+Where
+Select
+OrderBy
+Skip
+Take
+
+Use Dapper only when there is a genuine need, such as:
+
+- complex reporting queries
+- complicated SQL
+- performance-critical read queries
+- existing stored procedures
+
+Do not use Dapper everywhere.
+
+Do not use raw SQL when a straightforward EF Core query is sufficient.
+
+---
+
+# 15. DATABASE CONNECTION
+
+Database:
+
+CHE_WA_Global Rubber MMM
+
+The connection string must come from configuration.
+
+Never hard-code:
+
+- SQL username
+- SQL password
+- connection string secrets
+
+Never commit production credentials.
+
+Example configuration structure:
+
+ConnectionStrings:
+  DefaultConnection: "<configured securely>"
+
+Use environment-specific configuration.
+
+---
+
+# 16. DATABASE HEALTH CHECK
+
+Implement a health endpoint.
+
+Example:
+
+GET /health
+
+and a database health check.
+
+The health check must verify that the application can communicate with SQL Server.
+
+Do not expose:
+
+- connection strings
+- SQL credentials
+- internal exception details
+
+through health responses.
+
+---
+
+# 17. SWAGGER
+
+Swagger must be enabled for development.
+
+Document:
+
+- HTTP method
+- route
+- request DTO
+- response DTO
+- authorization requirement
+- possible error responses
+
+JWT authentication must be configurable in Swagger for development/testing.
+
+Do not expose Swagger publicly in production unless explicitly required.
+
+---
+
+# 18. GLOBAL EXCEPTION HANDLING
+
+Do not put try/catch blocks in every controller.
+
+Use centralized exception handling middleware.
+
+Handle:
+
+- validation errors
+- not found
+- unauthorized
+- forbidden
+- conflict
+- unexpected exceptions
+
+Do not return stack traces to clients.
+
+Log unexpected exceptions internally.
+
+---
+
+# 19. LOGGING
+
+There are two different concepts.
+
+## Audit Log
+
+Table:
+
+audit.audit_log
+
+Purpose:
+
+Business/security history.
+
+Examples:
+
+- User login
+- User logout
+- User created
+- User updated
+- Role changed
+- Permission changed
+- Machine updated
+- Breakdown status changed
+- Work order updated
+
+Question answered:
+
+"Who changed what?"
+
+## Application Log
+
+Table:
+
+audit.application_log
+
+Purpose:
+
+Technical diagnostics.
+
+Examples:
+
+- Information
+- Warning
+- Error
+- Critical
+- Exception
+- Database error
+- Authentication failure
+- API failure
+
+Question answered:
+
+"What happened technically?"
+
+DO NOT combine these two concepts.
+
+---
+
+# 20. SECURITY
+
+Never store:
+
+- Plaintext passwords
+- JWT tokens
+- Raw refresh tokens
+- API keys
+- Connection string secrets
+
+Passwords must be securely hashed.
+
+Refresh tokens must be stored according to the database design.
+
+Do not log authentication secrets.
+
+---
+
+# 21. AUTHORIZATION
+
+The application uses:
+
+User
+ ↓
+Role
+ ↓
+Permission
+ ↓
+Module/Menu
+
+Permissions include:
+
+- View
+- Add
+- Edit
+- Delete
+- Approve
+- Export
+
+Do not create a complicated permission framework unless requirements require it.
+
+Do not assume that hiding a menu item is sufficient authorization.
+
+Backend endpoints must enforce authorization.
+
+---
+
+# 22. AUTHENTICATION IMPLEMENTATION ORDER
+
+Implement:
+
+1. User login
+2. JWT generation
+3. Refresh token
+4. Current user
+5. Logout/revoke refresh token
+6. Authentication middleware
+7. Role/permission authorization
+
+After authentication is stable:
+
+User Master
+Role Master
+Module/Menu Master
+Permission Management
+
+Then business modules.
+
+---
+
+# 23. MASTER MODULES
+
+The current approved masters are:
+
+1. Machine
+2. Mold
+3. Product
+4. Department
+5. Employee
+6. Vendor
+7. Spare Part
+8. Maintenance Type
+9. Breakdown Type
+10. Maintenance Checklist
+
+Do not add:
+
+Machine Type
+Mold Type
+
+as independent modules unless requirements explicitly change.
+
+---
+
+# 24. TRANSACTION MODULES
+
+The current approved transaction areas are:
+
+1. Production Entry
+2. Machine Preventive Maintenance
+3. Mold Preventive Maintenance
+4. Machine Breakdown
+5. Maintenance Work Order
+6. Spare Part Usage
+
+Do not invent additional transaction workflows.
+
+---
+
+# 25. REPORTS
+
+Reports should query existing master and transaction data.
+
+Do not create:
+
+machine_report
+mold_report
+maintenance_report
+
+tables unless explicitly required.
+
+Use appropriate query/read models for complex reports.
+
+---
+
+# 26. OPEN BUSINESS QUESTIONS
+
+The following business questions are unresolved.
+
+Do NOT invent answers.
+
+Important examples:
+
+- Mold usage / cavity calculation
+- Automatic PM scheduling
+- PM next-date calculation
+- Work Order relationship with Breakdown and PM
+- Spare-part stock receipt workflow
+- Approval workflow
+
+Refer to:
+
+docs/GlobalRubber_Database_OpenQuestions.md
+
+before implementing affected functionality.
+
+If implementation depends on an unresolved question:
+
+STOP and identify the question.
+
+---
+
+# 27. EXISTING TEMPLATE DEFECTS
+
+The existing React template contains known issues.
+
+Do not copy known defects into the backend.
+
+Examples include:
+
+- UTC "Today" issue
+- PM Overdue mismatch
+- Zero-stock spare-part save issue
+- PM tabs not showing far-future schedules
+
+Backend behavior should follow the approved requirement, not blindly reproduce a known defect.
+
+If the intended production behavior is unclear, document it.
+
+---
+
+# 28. FRONTEND CONTRACT
+
+The backend must ultimately match the React frontend contract.
+
+Before creating an endpoint:
+
+Check:
+
+- expected URL
+- HTTP method
+- request fields
+- response fields
+- pagination
+- filters
+- sorting
+- status values
+- validation behavior
+- authentication
+- authorization
+
+Do not change frontend expectations without a documented reason.
+
+---
+
+# 29. API ROUTING
+
+Use consistent REST-style routes.
+
+Examples:
+
+GET
+/api/users
+
+GET
+/api/users/{id}
+
+POST
+/api/users
+
+PUT
+/api/users/{id}
+
+PATCH
+/api/users/{id}/status
+
+DELETE
+/api/users/{id}
+
+Use the existing project API naming conventions where already established.
+
+---
+
+# 30. VALIDATION
+
+Validate requests at the application boundary.
+
+Validate:
+
+- required fields
+- string lengths
+- numeric ranges
+- dates
+- duplicate business codes
+- valid foreign-key references
+- business status transitions
+
+Do not rely only on frontend validation.
+
+---
+
+# 31. TRANSACTION SAFETY
+
+For operations that modify multiple related records:
+
+Use an appropriate database transaction.
+
+Example:
+
+Spare part usage
+→ update usage transaction
+→ update stock
+
+These must not leave the database partially updated.
+
+Do not implement stock behavior beyond the approved requirements.
+
+---
+
+# 32. SOFT DELETE
+
+Do not automatically use IsDeleted on every entity.
+
+Use:
+
+is_active
+
+for masters where appropriate.
+
+Transactions should use their actual business status/lifecycle.
+
+---
+
+# 33. CONCURRENCY
+
+The database contains rowversion columns.
+
+Use optimistic concurrency where applicable.
+
+If an update detects a concurrency conflict:
+
+Return a controlled conflict response.
+
+Do not silently overwrite another user's changes.
+
+---
+
+# 34. CODE QUALITY
+
+Use:
+
+- Nullable reference types
+- Explicit access modifiers
+- Dependency injection
+- Async/await
+- CancellationToken
+- Meaningful names
+- Small focused methods
+- SOLID principles
+- Clean Architecture
+
+Avoid:
+
+- Giant controllers
+- Giant services
+- Static database access
+- Business logic inside controllers
+- Duplicate SQL
+- Magic strings
+- Hard-coded IDs
+- Hard-coded credentials
+
+---
+
+# 35. CONTROLLERS
+
+Controllers should be thin.
+
+Controller responsibility:
+
+- receive HTTP request
+- validate/request binding
+- call application service
+- return HTTP response
+
+Do not put business rules inside controllers.
+
+---
+
+# 36. SERVICES
+
+Services contain application/business orchestration.
+
+Do not put:
+
+- HTTP-specific logic
+- SQL connection management
+- controller response formatting
+
+inside services.
+
+---
+
+# 37. REPOSITORIES
+
+Repositories handle persistence concerns.
+
+Do not put business decisions in repositories.
+
+Prefer EF Core LINQ for standard operations.
+
+---
+
+# 38. DTOs
+
+Do not expose EF Core entities directly from API endpoints.
+
+Use request/response DTOs.
+
+Separate:
+
+Create DTO
+Update DTO
+Response DTO
+List DTO
+
+where appropriate.
+
+Never expose:
+
+password_hash
+refresh token hashes
+internal security information
+
+to clients.
+
+---
+
+# 39. TESTING
+
+After implementing each feature:
+
+1. Build solution
+2. Run unit tests
+3. Run API
+4. Test Swagger endpoint
+5. Test database behavior
+6. Test authorization
+7. Test invalid input
+8. Test not-found cases
+9. Test duplicate cases
+10. Compare with frontend requirements
+
+Do not move to the next feature if the current feature is broken.
+
+---
+
+# 40. GIT / CHANGE MANAGEMENT
+
+Make focused changes.
+
+Do not modify unrelated files.
+
+Before changing an existing file:
+
+Understand why it exists.
+
+Do not delete existing functionality simply because a cleaner implementation is preferred.
+
+Preserve working behavior unless there is an approved reason to change it.
+
+---
+
+# 41. DO NOT DO THIS
+
+Never:
+
+- Invent business rules
+- Redesign the database without approval
+- Add random tables
+- Add random endpoints
+- Create all controllers at once
+- Skip authorization
+- Store plaintext passwords
+- Expose secrets
+- Return EF entities directly
+- Put SQL everywhere
+- Put business logic in controllers
+- Ignore CancellationToken
+- Ignore concurrency
+- Hide errors silently
+- Copy known template defects blindly
+
+---
+
+# 42. WHEN REQUIREMENTS ARE UNCLEAR
+
+Use this process:
+
+1. Identify exactly what is unclear.
+2. Identify which screen/database/table is affected.
+3. Check the analysis document.
+4. Check the template behavior.
+5. Check database design.
+6. If still unclear, stop.
+7. Record the question.
+8. Ask for clarification.
+
+Do not guess.
+
+---
+
+# 43. CURRENT NEXT TASK
+
+The immediate task is:
+
+BACKEND FOUNDATION
+
+Implement only:
+
+1. Solution
+2. Projects
+3. Project references
+4. Configuration
+5. EF Core
+6. SQL Server connection
+7. DbContext
+8. Dependency Injection
+9. ApiResponse
+10. Pagination
+11. Global exception handling
+12. Swagger
+13. API health check
+14. Database health check
+15. Logging
+16. Correlation ID
+17. CORS
+18. JWT foundation
+
+Do NOT start Machine, Mold, Production, PM, Breakdown or Work Order yet.
+
+After the foundation is working:
+
+Authentication → User → Role → Module → Permission.
+
+---
+
+# 44. REQUIRED DOCUMENTATION
+
+Maintain:
+
+docs/
+├── GlobalRubber_MMM_System_Analysis.md
+├── GlobalRubber_Database_Design.md
+└── GlobalRubber_Database_OpenQuestions.md
+
+When architectural decisions are made, document them appropriately.
+
+Do not rewrite the original analysis unnecessarily.
+
+---
+
+# 45. FINAL DEVELOPMENT PRINCIPLE
+
+This is a controlled migration/implementation project.
+
+The priority is:
+
+CORRECTNESS
+↓
+REQUIREMENT MATCH
+↓
+DATABASE CONSISTENCY
+↓
+SECURITY
+↓
+MAINTAINABILITY
+↓
+PERFORMANCE
+↓
+USER EXPERIENCE
+
+Do not optimize prematurely.
+
+Do not add features because they "might be useful."
+
+Implement what the Global Rubber MMM requirements actually require.
+
+---
+
+# 46. BEFORE EVERY IMPLEMENTATION
+
+Before writing code, answer internally:
+
+1. What requirement am I implementing?
+2. Which screen/function needs it?
+3. Which database table supports it?
+4. What is the existing business rule?
+5. What API contract is required?
+6. What authorization is required?
+7. Are there unresolved questions?
+8. Could this change affect existing functionality?
+
+Only then implement.
+
+---
+
+# 47. STOP CONDITIONS
+
+STOP and ask for clarification when:
+
+- Business rule is missing
+- Database relationship is ambiguous
+- Status transition is unclear
+- Calculation is undefined
+- Existing template behavior conflicts with requirements
+- A new table appears necessary
+- A new permission/action is needed
+- A security decision is unclear
+
+Do not guess.
+
+---
+
+## END OF CLAUDE.md
