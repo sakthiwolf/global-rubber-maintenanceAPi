@@ -20,4 +20,10 @@ public sealed class UserDto
     public bool MustChangePassword { get; init; }
     public DateTime? LastLoginAt { get; init; }
     public bool IsActive { get; init; }
+
+    /// <summary>
+    /// Base64 row_version. The client keeps it and sends it back on PUT: if the user changed in between,
+    /// the update is refused with 409. Opaque - never interpreted client-side.
+    /// </summary>
+    public string RowVersion { get; init; } = string.Empty;
 }

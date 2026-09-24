@@ -44,6 +44,9 @@ public sealed class AuditLogService : IAuditLogService
                 RecordRef = entry.RecordRef,
                 Description = entry.Description,
                 IpAddress = entry.IpAddress,
+                Details = entry.Details
+                    .Select(d => new AuditLogDetail { FieldName = d.FieldName, OldValue = d.OldValue, NewValue = d.NewValue })
+                    .ToList(),
             };
 
             await _auditLogRepository.AddAsync(auditLog, cancellationToken);

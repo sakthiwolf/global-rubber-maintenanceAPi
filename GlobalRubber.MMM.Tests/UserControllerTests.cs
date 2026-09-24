@@ -29,16 +29,9 @@ public class UserControllerTests : IClassFixture<ApiWebApplicationFactory>
         _factory = factory;
     }
 
-    /// <summary>For GetById, which [RequirePermission] does not (yet) protect - no token needed.</summary>
+    /// <summary>GetById is protected by [RequirePermission] as well, so it uses the authenticated client too.</summary>
     private HttpClient CreateClientWithFakeUserService(FakeUserService fake) =>
-        _factory.WithWebHostBuilder(builder =>
-        {
-            builder.ConfigureTestServices(services =>
-            {
-                services.RemoveAll<IUserService>();
-                services.AddSingleton<IUserService>(fake);
-            });
-        }).CreateClient();
+        CreateAuthenticatedClientWithFakeUserService(fake);
 
     /// <summary>For GetAll, which [RequirePermission] does protect - needs a real, validly
     /// signed token plus a permissive fake IPermissionAuthorizationService (this file exercises
@@ -161,6 +154,12 @@ public class UserControllerTests : IClassFixture<ApiWebApplicationFactory>
 
         public Task<PagedResult<UserDto>> GetAllAsync(PaginationRequest request, CancellationToken cancellationToken) =>
             Task.FromResult(PagedResult<UserDto>.Create(_users, request.PageNumber, request.PageSize, _users.Count));
+
+        public Task<UserDto> CreateAsync(CreateUserRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by this test.");
+
+        public Task<UserDto> UpdateAsync(int userId, UpdateUserRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by this test.");
 
         public Task<UserDto> GetByIdAsync(int userId, CancellationToken cancellationToken)
         {

@@ -12,7 +12,7 @@ namespace GlobalRubber.MMM.Tests;
 /// <see cref="RolePermissionControllerTests"/> (which fakes IPermissionService itself), these
 /// exercise the actual matrix-building, upsert and validation logic.
 /// </summary>
-public class PermissionServiceTests
+public partial class PermissionServiceTests
 {
     private static Role AdminRole => new() { RoleId = 1, RoleCode = "ADMIN", RoleName = "Administrator", IsActive = true };
 
@@ -32,7 +32,7 @@ public class PermissionServiceTests
             // No row at all for ModuleId 2 - should surface as an all-false entry, not an error.
         });
 
-        var service = new PermissionService(repository, new FakeRoleRepository(AdminRole), new FakeDateTimeProvider());
+        var service = CreateService(repository, new FakeRoleRepository(AdminRole));
 
         var matrix = await service.GetRolePermissionsAsync(1, CancellationToken.None);
 
@@ -51,10 +51,7 @@ public class PermissionServiceTests
     [Fact]
     public async Task GetRolePermissionsAsync_ThrowsNotFoundException_WhenRoleDoesNotExist()
     {
-        var service = new PermissionService(
-            new FakePermissionRepository(SampleModules(), new List<Permission>()),
-            new FakeRoleRepository(role: null),
-            new FakeDateTimeProvider());
+        var service = CreateService(new FakePermissionRepository(SampleModules(), new List<Permission>()), new FakeRoleRepository(role: null));
 
         await Assert.ThrowsAsync<NotFoundException>(() => service.GetRolePermissionsAsync(999, CancellationToken.None));
     }
@@ -66,7 +63,7 @@ public class PermissionServiceTests
         {
             new() { RoleId = 1, ModuleId = 1, CanView = true, CanExport = true },
         });
-        var service = new PermissionService(repository, new FakeRoleRepository(AdminRole), new FakeDateTimeProvider());
+        var service = CreateService(repository, new FakeRoleRepository(AdminRole));
 
         var matrix = await service.UpdateRolePermissionsAsync(1, new UpdateRolePermissionsRequest
         {
@@ -74,7 +71,7 @@ public class PermissionServiceTests
             {
                 new ModulePermissionUpdateDto { ModuleId = 2, CanView = true, CanAdd = true, CanEdit = true },
             },
-        }, CancellationToken.None);
+        }, actingUserId: 7, ipAddress: null, cancellationToken: CancellationToken.None);
 
         var machine = matrix.Permissions.Single(p => p.ModuleCode == "MASTER_MACHINE");
         Assert.True(machine.CanView);
@@ -91,7 +88,7 @@ public class PermissionServiceTests
     public async Task UpdateRolePermissionsAsync_InsertsNewRow_WhenNoPermissionRowPreviouslyExisted()
     {
         var repository = new FakePermissionRepository(SampleModules(), existingPermissions: new List<Permission>());
-        var service = new PermissionService(repository, new FakeRoleRepository(AdminRole), new FakeDateTimeProvider());
+        var service = CreateService(repository, new FakeRoleRepository(AdminRole));
 
         var matrix = await service.UpdateRolePermissionsAsync(1, new UpdateRolePermissionsRequest
         {
@@ -99,7 +96,7 @@ public class PermissionServiceTests
             {
                 new ModulePermissionUpdateDto { ModuleId = 2, CanView = true, CanApprove = true },
             },
-        }, CancellationToken.None);
+        }, actingUserId: 7, ipAddress: null, cancellationToken: CancellationToken.None);
 
         var machine = matrix.Permissions.Single(p => p.ModuleCode == "MASTER_MACHINE");
         Assert.True(machine.CanView);
@@ -110,7 +107,7 @@ public class PermissionServiceTests
     public async Task UpdateRolePermissionsAsync_ThrowsValidationException_ForDuplicateModuleId()
     {
         var repository = new FakePermissionRepository(SampleModules(), new List<Permission>());
-        var service = new PermissionService(repository, new FakeRoleRepository(AdminRole), new FakeDateTimeProvider());
+        var service = CreateService(repository, new FakeRoleRepository(AdminRole));
 
         await Assert.ThrowsAsync<ValidationException>(() => service.UpdateRolePermissionsAsync(1, new UpdateRolePermissionsRequest
         {
@@ -119,43 +116,40 @@ public class PermissionServiceTests
                 new ModulePermissionUpdateDto { ModuleId = 2, CanView = true },
                 new ModulePermissionUpdateDto { ModuleId = 2, CanView = false },
             },
-        }, CancellationToken.None));
+        }, actingUserId: 7, ipAddress: null, cancellationToken: CancellationToken.None));
     }
 
     [Fact]
     public async Task UpdateRolePermissionsAsync_ThrowsValidationException_ForUnknownModuleId()
     {
         var repository = new FakePermissionRepository(SampleModules(), new List<Permission>());
-        var service = new PermissionService(repository, new FakeRoleRepository(AdminRole), new FakeDateTimeProvider());
+        var service = CreateService(repository, new FakeRoleRepository(AdminRole));
 
         await Assert.ThrowsAsync<ValidationException>(() => service.UpdateRolePermissionsAsync(1, new UpdateRolePermissionsRequest
         {
             Permissions = new[] { new ModulePermissionUpdateDto { ModuleId = 999, CanView = true } },
-        }, CancellationToken.None));
+        }, actingUserId: 7, ipAddress: null, cancellationToken: CancellationToken.None));
     }
 
     [Fact]
     public async Task UpdateRolePermissionsAsync_ThrowsValidationException_ForInactiveModuleId()
     {
         var repository = new FakePermissionRepository(SampleModules(), new List<Permission>());
-        var service = new PermissionService(repository, new FakeRoleRepository(AdminRole), new FakeDateTimeProvider());
+        var service = CreateService(repository, new FakeRoleRepository(AdminRole));
 
         // ModuleId 3 (Mold) exists but is inactive - rejected the same as a genuinely unknown id.
         await Assert.ThrowsAsync<ValidationException>(() => service.UpdateRolePermissionsAsync(1, new UpdateRolePermissionsRequest
         {
             Permissions = new[] { new ModulePermissionUpdateDto { ModuleId = 3, CanView = true } },
-        }, CancellationToken.None));
+        }, actingUserId: 7, ipAddress: null, cancellationToken: CancellationToken.None));
     }
 
     [Fact]
     public async Task UpdateRolePermissionsAsync_ThrowsNotFoundException_WhenRoleDoesNotExist()
     {
-        var service = new PermissionService(
-            new FakePermissionRepository(SampleModules(), new List<Permission>()),
-            new FakeRoleRepository(role: null),
-            new FakeDateTimeProvider());
+        var service = CreateService(new FakePermissionRepository(SampleModules(), new List<Permission>()), new FakeRoleRepository(role: null));
 
-        await Assert.ThrowsAsync<NotFoundException>(() => service.UpdateRolePermissionsAsync(999, new UpdateRolePermissionsRequest(), CancellationToken.None));
+        await Assert.ThrowsAsync<NotFoundException>(() => service.UpdateRolePermissionsAsync(999, new UpdateRolePermissionsRequest(), 7, null, CancellationToken.None));
     }
 
     private sealed class FakeDateTimeProvider : IDateTimeProvider
@@ -178,6 +172,21 @@ public class PermissionServiceTests
 
         public Task<Role?> GetByIdAsync(int roleId, CancellationToken cancellationToken) =>
             Task.FromResult(_role is not null && _role.RoleId == roleId ? _role : null);
+
+        public Task<bool> ExistsByCodeAsync(string roleCode, int? excludeRoleId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by PermissionServiceTests.");
+
+        public Task<bool> ExistsByNameAsync(string roleName, int? excludeRoleId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by PermissionServiceTests.");
+
+        public Task<Role> AddAsync(Role role, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by PermissionServiceTests.");
+
+        public Task<Role> UpdateAsync(Role role, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by PermissionServiceTests.");
+
+        public Task<Role> DeactivateAsync(Role role, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by PermissionServiceTests.");
     }
 
     /// <summary>Mirrors the real PermissionRepository's upsert semantics in memory.</summary>

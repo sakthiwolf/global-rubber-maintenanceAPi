@@ -45,6 +45,7 @@ public static class DependencyInjection
         });
 
         services.AddSingleton<IDateTimeProvider, DateTimeProvider>();
+        services.AddScoped<IDocumentSequenceGenerator, DocumentSequenceGenerator>();
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IRoleRepository, RoleRepository>();
         services.AddScoped<IPermissionRepository, PermissionRepository>();

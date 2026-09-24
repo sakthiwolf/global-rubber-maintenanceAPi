@@ -233,6 +233,18 @@ public class AuthServiceTests
         public Task<User?> GetByLoginIdForAuthenticationAsync(string loginId, CancellationToken cancellationToken) =>
             Task.FromResult(_existingUser is not null && _existingUser.LoginId == loginId ? _existingUser : null);
 
+        public Task<bool> AnyActiveByRoleIdAsync(int roleId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by AuthServiceTests.");
+
+        public Task<bool> ExistsByLoginIdAsync(string loginId, int? excludeUserId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed here.");
+
+        public Task<User> AddAsync(User user, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed here.");
+
+        public Task<User> UpdateAsync(User user, byte[] originalRowVersion, bool passwordChanged, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed here.");
+
         public Task UpdateLastLoginAtAsync(int userId, DateTime lastLoginAtUtc, CancellationToken cancellationToken)
         {
             LastLoginUpdateCount++;

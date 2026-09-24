@@ -179,6 +179,12 @@ public class AuthorizationTests : IClassFixture<ApiWebApplicationFactory>
 
         public Task<UserDto> GetByIdAsync(int userId, CancellationToken cancellationToken) =>
             throw new NotSupportedException("Not needed by AuthorizationTests.");
+
+        public Task<UserDto> CreateAsync(CreateUserRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by this test.");
+
+        public Task<UserDto> UpdateAsync(int userId, UpdateUserRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by this test.");
     }
 
     private sealed class FakePermissionAuthorizationService : IPermissionAuthorizationService

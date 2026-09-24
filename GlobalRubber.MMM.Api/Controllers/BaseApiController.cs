@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 
 namespace GlobalRubber.MMM.Api.Controllers;
@@ -15,4 +16,9 @@ namespace GlobalRubber.MMM.Api.Controllers;
 [Route("api/v1/[controller]")]
 public abstract class BaseApiController : ControllerBase
 {
+    // The JWT "sub" claim is the user id; the default inbound claim mapping surfaces it as
+    // ClaimTypes.NameIdentifier (the same lookup GlobalExceptionHandler uses). Used by the write endpoints
+    // for UpdatedBy/CreatedBy and the audit entry.
+    protected int? GetAuthenticatedUserId() =>
+        int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId) ? userId : null;
 }

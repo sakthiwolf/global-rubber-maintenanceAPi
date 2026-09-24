@@ -37,6 +37,10 @@ public sealed class RequirePermissionAttribute : Attribute, IAsyncAuthorizationF
         _action = action;
     }
 
+    // Read-only so tests can verify, by reflection, that every endpoint declares the right permission.
+    public string ModuleCode => _moduleCode;
+    public PermissionAction Action => _action;
+
     public async Task OnAuthorizationAsync(AuthorizationFilterContext context)
     {
         var user = context.HttpContext.User;

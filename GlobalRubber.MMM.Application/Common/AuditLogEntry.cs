@@ -15,4 +15,13 @@ public sealed class AuditLogEntry
     public string? RecordRef { get; init; }
     public string Description { get; init; } = string.Empty;
     public string? IpAddress { get; init; }
+
+    /// <summary>
+    /// Optional field-level old/new values, written to audit.audit_log_detail in the same save as
+    /// the audit_log row. Empty for events that have no field-level story (login, role created...).
+    /// </summary>
+    public IReadOnlyList<AuditLogDetailEntry> Details { get; init; } = Array.Empty<AuditLogDetailEntry>();
 }
+
+/// <summary>One audit_log_detail row - field names match its columns exactly (field_name/old_value/new_value).</summary>
+public sealed record AuditLogDetailEntry(string FieldName, string? OldValue, string? NewValue);

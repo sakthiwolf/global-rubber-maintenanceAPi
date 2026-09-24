@@ -73,6 +73,12 @@ public class GlobalExceptionHandlerTests : IClassFixture<ApiWebApplicationFactor
 
         public Task<UserDto> GetByIdAsync(int userId, CancellationToken cancellationToken) =>
             throw new NotSupportedException("Not needed by this test.");
+
+        public Task<UserDto> CreateAsync(CreateUserRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by this test.");
+
+        public Task<UserDto> UpdateAsync(int userId, UpdateUserRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by this test.");
     }
 
     private sealed class AlwaysAllowPermissionAuthorizationService : IPermissionAuthorizationService

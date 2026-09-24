@@ -27,15 +27,26 @@ public class RolePermissionControllerTests : IClassFixture<ApiWebApplicationFact
         _factory = factory;
     }
 
-    private HttpClient CreateClientWithFakePermissionService(FakePermissionService fake) =>
-        _factory.WithWebHostBuilder(builder =>
+    // The permission endpoints require AdminRoles.View/Edit: these tests are about the HTTP contract, so
+    // they run as a signed-in user whose permission check is granted. 401/403 behavior is covered
+    // separately in RoleAuthorizationTests.
+    private HttpClient CreateClientWithFakePermissionService(FakePermissionService fake)
+    {
+        var factory = _factory.WithWebHostBuilder(builder =>
         {
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IPermissionService>();
                 services.AddSingleton<IPermissionService>(fake);
+                services.RemoveAll<IPermissionAuthorizationService>();
+                services.AddSingleton<IPermissionAuthorizationService>(new StubPermissionAuthorization(grantAll: true));
             });
-        }).CreateClient();
+        });
+
+        var client = factory.CreateClient();
+        TestAuth.Authenticate(client, factory);
+        return client;
+    }
 
     [Fact]
     public async Task GetPermissions_Returns200_WithFullMatrix_ForValidRole()
@@ -215,8 +226,12 @@ public class RolePermissionControllerTests : IClassFixture<ApiWebApplicationFact
             });
         }
 
+        public Task<RolePermissionMatrixDto> GetMyPermissionsAsync(int userId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by RolePermissionControllerTests.");
+
         public Task<RolePermissionMatrixDto> UpdateRolePermissionsAsync(
-            int roleId, UpdateRolePermissionsRequest request, CancellationToken cancellationToken)
+            int roleId, UpdateRolePermissionsRequest request, int? actingUserId, string? ipAddress,
+            CancellationToken cancellationToken)
         {
             if (!_matrixByRoleId.TryGetValue(roleId, out var permissions))
             {

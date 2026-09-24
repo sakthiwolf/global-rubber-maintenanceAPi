@@ -2,6 +2,7 @@ using GlobalRubber.MMM.Application.Common;
 using GlobalRubber.MMM.Application.Interfaces.Repositories;
 using GlobalRubber.MMM.Domain.Entities;
 using GlobalRubber.MMM.Infrastructure.Data;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace GlobalRubber.MMM.Infrastructure.Repositories;
@@ -69,6 +70,21 @@ public sealed class PermissionRepository : IPermissionRepository
 
         // Single call: every insert/update for this role's whole matrix goes through one
         // implicit transaction, so a partial save is not possible.
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // row_version mismatch: someone changed one of these rows after it was loaded above.
+            throw new ConflictException(
+                "The permissions were modified by another user while saving. Reload and try again.");
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is SqlException { Number: 2601 or 2627 })
+        {
+            // (role_id, module_id) unique index - two concurrent first-time saves for the same role/module.
+            throw new ConflictException(
+                "The permissions were modified by another user while saving. Reload and try again.");
+        }
     }
 }

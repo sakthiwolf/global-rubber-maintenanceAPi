@@ -25,15 +25,26 @@ public class RoleControllerTests : IClassFixture<ApiWebApplicationFactory>
         _factory = factory;
     }
 
-    private HttpClient CreateClientWithFakeRoleService(FakeRoleService fake) =>
-        _factory.WithWebHostBuilder(builder =>
+    // The role endpoints require AdminRoles.View: these tests are about the HTTP contract, so they run
+    // as a signed-in user whose permission check is granted. 401/403 behavior is covered separately
+    // in RoleAuthorizationTests.
+    private HttpClient CreateClientWithFakeRoleService(FakeRoleService fake)
+    {
+        var factory = _factory.WithWebHostBuilder(builder =>
         {
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IRoleService>();
                 services.AddSingleton<IRoleService>(fake);
+                services.RemoveAll<IPermissionAuthorizationService>();
+                services.AddSingleton<IPermissionAuthorizationService>(new StubPermissionAuthorization(grantAll: true));
             });
-        }).CreateClient();
+        });
+
+        var client = factory.CreateClient();
+        TestAuth.Authenticate(client, factory);
+        return client;
+    }
 
     [Fact]
     public async Task GetAll_Returns200_WithCorrectPagedEnvelope_AndRoleItems()
@@ -134,6 +145,18 @@ public class RoleControllerTests : IClassFixture<ApiWebApplicationFactory>
 
         public Task<PagedResult<RoleDto>> GetAllAsync(PaginationRequest request, CancellationToken cancellationToken) =>
             Task.FromResult(PagedResult<RoleDto>.Create(_roles, request.PageNumber, request.PageSize, _roles.Count));
+
+        public Task<RoleDto> CreateAsync(
+            CreateRoleRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by the read-only role tests.");
+
+        public Task<RoleDto> UpdateAsync(
+            int roleId, UpdateRoleRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by the read-only role tests.");
+
+        public Task<RoleDto> DeactivateAsync(
+            int roleId, int? actingUserId, string? ipAddress, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not needed by the read-only role tests.");
 
         public Task<RoleDto> GetByIdAsync(int roleId, CancellationToken cancellationToken)
         {

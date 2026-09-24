@@ -42,6 +42,46 @@ public class AuditLogServiceTests
     }
 
     [Fact]
+    public async Task LogAsync_PersistsFieldLevelDetails_WithTheAuditLogRow()
+    {
+        var repository = new FakeAuditLogRepository();
+        var service = new AuditLogService(
+            repository, new FixedDateTimeProvider(new DateTime(2026, 5, 1, 9, 30, 0, DateTimeKind.Utc)), NullLogger<AuditLogService>.Instance);
+
+        await service.LogAsync(new AuditLogEntry
+        {
+            UserName = "Ravi Kumar",
+            Module = "Security",
+            Action = "PermissionsUpdated",
+            Description = "changed",
+            Details = new[]
+            {
+                new AuditLogDetailEntry("ADMIN_USERS.can_add", "false", "true"),
+                new AuditLogDetailEntry("ADMIN_USERS.can_edit", "true", "false"),
+            },
+        }, CancellationToken.None);
+
+        var saved = Assert.Single(repository.AddedLogs);
+        Assert.Equal(2, saved.Details.Count);
+        var first = saved.Details.First();
+        Assert.Equal("ADMIN_USERS.can_add", first.FieldName);
+        Assert.Equal("false", first.OldValue);
+        Assert.Equal("true", first.NewValue);
+    }
+
+    [Fact]
+    public async Task LogAsync_WithoutDetails_WritesNoDetailRows()
+    {
+        var repository = new FakeAuditLogRepository();
+        var service = new AuditLogService(
+            repository, new FixedDateTimeProvider(DateTime.UtcNow), NullLogger<AuditLogService>.Instance);
+
+        await service.LogAsync(new AuditLogEntry { UserName = "x", Module = "Security", Action = "Login", Description = "d" }, CancellationToken.None);
+
+        Assert.Empty(Assert.Single(repository.AddedLogs).Details);
+    }
+
+    [Fact]
     public async Task LogAsync_DoesNotThrow_WhenRepositoryFails()
     {
         // The failure-behavior decision: a logging failure never fails (or surfaces to) the

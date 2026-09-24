@@ -126,6 +126,10 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
             StatusCodes.Status404NotFound,
             ApiResponse.Fail(notFoundException.Message)),
 
+        ConflictException conflictException => (
+            StatusCodes.Status409Conflict,
+            ApiResponse.Fail(conflictException.Message)),
+
         ForbiddenAccessException forbiddenException => (
             StatusCodes.Status403Forbidden,
             ApiResponse.Fail(forbiddenException.Message)),
