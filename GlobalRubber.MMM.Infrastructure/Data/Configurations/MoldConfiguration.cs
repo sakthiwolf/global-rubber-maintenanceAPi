@@ -26,8 +26,13 @@ public class MoldConfiguration : IEntityTypeConfiguration<Mold>
         builder.Property(e => e.MaximumShots).HasColumnName("maximum_shots").IsRequired();
         builder.Property(e => e.WarningShots).HasColumnName("warning_shots").IsRequired();
         builder.Property(e => e.ReplacementShots).HasColumnName("replacement_shots").IsRequired();
+        // CK_mold_master_maintenance_frequency_shots (migration 014): NULL or > 0 - the usage-based PM interval.
         builder.Property(e => e.MaintenanceFrequencyShots).HasColumnName("maintenance_frequency_shots");
         builder.Property(e => e.CurrentUsageShots).HasColumnName("current_usage_shots").IsRequired();
+        // Migration 014: CK_mold_master_pm_cycle_start_shots (>= 0), default 0; CK_mold_master_pm_warning_shots (NULL, or
+        // > 0 and below the interval).
+        builder.Property(e => e.PmCycleStartShots).HasColumnName("pm_cycle_start_shots").IsRequired();
+        builder.Property(e => e.PmWarningShots).HasColumnName("pm_warning_shots");
         builder.Property(e => e.ResponsibleEmployeeId).HasColumnName("responsible_employee_id");
         builder.Property(e => e.Status).HasColumnName("status").HasMaxLength(20).IsUnicode(false).IsRequired();
         builder.Property(e => e.Remarks).HasColumnName("remarks").HasMaxLength(500);

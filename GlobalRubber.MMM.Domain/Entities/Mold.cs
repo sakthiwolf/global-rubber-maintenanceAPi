@@ -25,8 +25,22 @@ public class Mold : AuditableEntity
     public int MaximumShots { get; set; } = 500000;
     public int WarningShots { get; set; } = 450000;
     public int ReplacementShots { get; set; } = 500000;
+    /// <summary>
+    /// The usage-based PM interval in shots (migration 014 - analysis Q-03). NULL = usage-based PM is disabled for the mold.
+    /// </summary>
     public int? MaintenanceFrequencyShots { get; set; }
+
+    /// <summary>The ONE authoritative, cumulative shot counter: Production Entry adds to it, nothing resets it.</summary>
     public int CurrentUsageShots { get; set; }
+
+    /// <summary>
+    /// Start of the current PM cycle (migration 014); the next PM threshold is this + the interval. System-managed: only
+    /// the Mold PM completion moves it (re-anchored on the completed PM's threshold, see MoldPmRules).
+    /// </summary>
+    public int PmCycleStartShots { get; set; }
+
+    /// <summary>Warning margin in remaining shots (migration 014): warn when 0 &lt; remaining &lt;= this. NULL = no warning.</summary>
+    public int? PmWarningShots { get; set; }
     public int? ResponsibleEmployeeId { get; set; }
     public string Status { get; set; } = MoldStatus.Available;
 

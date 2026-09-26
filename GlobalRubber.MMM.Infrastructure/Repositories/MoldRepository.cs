@@ -135,68 +135,98 @@ public sealed class MoldRepository : IMoldRepository
         return mold;
     }
 
-    public async Task<Mold> UpdateAsync(Mold mold, byte[] originalRowVersion, CancellationToken cancellationToken)
+    public async Task<Mold> UpdateAsync(Mold mold, byte[] originalRowVersion, Func<Mold, CancellationToken, Task>? afterSave, CancellationToken cancellationToken)
     {
-        // Attach a stub (key + the caller's row version + only the values this operation writes): no navigations, and
-        // the row version the CALLER holds becomes the ORIGINAL value in the UPDATE's WHERE clause.
-        var stub = new Mold
-        {
-            MoldId = mold.MoldId,
-            RowVersion = originalRowVersion,
-            MoldName = mold.MoldName,
-            ProductId = mold.ProductId,
-            MoldType = mold.MoldType,
-            CavityCount = mold.CavityCount,
-            Manufacturer = mold.Manufacturer,
-            SerialNumber = mold.SerialNumber,
-            Location = mold.Location,
-            StorageLocation = mold.StorageLocation,
-            CommissionDate = mold.CommissionDate,
-            MaximumShots = mold.MaximumShots,
-            WarningShots = mold.WarningShots,
-            ReplacementShots = mold.ReplacementShots,
-            MaintenanceFrequencyShots = mold.MaintenanceFrequencyShots,
-            CurrentUsageShots = mold.CurrentUsageShots,
-            ResponsibleEmployeeId = mold.ResponsibleEmployeeId,
-            Status = mold.Status,
-            Remarks = mold.Remarks,
-            UpdatedAt = mold.UpdatedAt,
-            UpdatedBy = mold.UpdatedBy,
-        };
-
-        var entry = _dbContext.Attach(stub);
-        foreach (var property in new[]
-        {
-            nameof(Mold.MoldName), nameof(Mold.ProductId), nameof(Mold.MoldType), nameof(Mold.CavityCount), nameof(Mold.Manufacturer),
-            nameof(Mold.SerialNumber), nameof(Mold.Location), nameof(Mold.StorageLocation), nameof(Mold.CommissionDate),
-            nameof(Mold.MaximumShots), nameof(Mold.WarningShots), nameof(Mold.ReplacementShots), nameof(Mold.MaintenanceFrequencyShots),
-            nameof(Mold.CurrentUsageShots), nameof(Mold.ResponsibleEmployeeId), nameof(Mold.Status), nameof(Mold.Remarks),
-            nameof(Mold.UpdatedAt), nameof(Mold.UpdatedBy),
-        })
-        {
-            entry.Property(property).IsModified = true;
-        }
+        // The DbContext is configured with EnableRetryOnFailure, so a transaction we start ourselves must run inside the
+        // execution strategy. If the caller already has a transaction open (a verification harness), join it.
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+        Mold? stub = null;
 
         try
         {
-            await _dbContext.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            entry.State = EntityState.Detached;
-            throw new ConflictException(ConcurrencyMessage);
-        }
-        catch (DbUpdateException ex) when (IsUniqueViolation(ex, out _))
-        {
-            entry.State = EntityState.Detached;
+            await strategy.ExecuteAsync(async () =>
+            {
+                if (stub is not null) _dbContext.Entry(stub).State = EntityState.Detached; // a retry starts clean
 
-            // mold_code is never written here, so the only unique index an update can hit is the serial number's.
-            throw new ConflictException($"A mold with serial number '{mold.SerialNumber}' already exists.");
+                var ownsTransaction = _dbContext.Database.CurrentTransaction is null;
+                await using var transaction = ownsTransaction ? await _dbContext.Database.BeginTransactionAsync(cancellationToken) : null;
+
+                // Attach a stub (key + the caller's row version + only the values this operation writes): no navigations,
+                // and the row version the CALLER holds becomes the ORIGINAL value in the UPDATE's WHERE clause.
+                stub = new Mold
+                {
+                    MoldId = mold.MoldId,
+                    RowVersion = originalRowVersion,
+                    MoldName = mold.MoldName,
+                    ProductId = mold.ProductId,
+                    MoldType = mold.MoldType,
+                    CavityCount = mold.CavityCount,
+                    Manufacturer = mold.Manufacturer,
+                    SerialNumber = mold.SerialNumber,
+                    Location = mold.Location,
+                    StorageLocation = mold.StorageLocation,
+                    CommissionDate = mold.CommissionDate,
+                    MaximumShots = mold.MaximumShots,
+                    WarningShots = mold.WarningShots,
+                    ReplacementShots = mold.ReplacementShots,
+                    MaintenanceFrequencyShots = mold.MaintenanceFrequencyShots,
+                    PmWarningShots = mold.PmWarningShots,
+                    CurrentUsageShots = mold.CurrentUsageShots,
+                    ResponsibleEmployeeId = mold.ResponsibleEmployeeId,
+                    Status = mold.Status,
+                    Remarks = mold.Remarks,
+                    UpdatedAt = mold.UpdatedAt,
+                    UpdatedBy = mold.UpdatedBy,
+                };
+
+                var entry = _dbContext.Attach(stub);
+                foreach (var property in new[]
+                {
+                    nameof(Mold.MoldName), nameof(Mold.ProductId), nameof(Mold.MoldType), nameof(Mold.CavityCount), nameof(Mold.Manufacturer),
+                    nameof(Mold.SerialNumber), nameof(Mold.Location), nameof(Mold.StorageLocation), nameof(Mold.CommissionDate),
+                    nameof(Mold.MaximumShots), nameof(Mold.WarningShots), nameof(Mold.ReplacementShots), nameof(Mold.MaintenanceFrequencyShots),
+                    nameof(Mold.PmWarningShots), nameof(Mold.CurrentUsageShots), nameof(Mold.ResponsibleEmployeeId), nameof(Mold.Status),
+                    nameof(Mold.Remarks), nameof(Mold.UpdatedAt), nameof(Mold.UpdatedBy),
+                })
+                {  
+                    entry.Property(property).IsModified = true;
+                }
+
+                try
+                {
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    throw new ConflictException(ConcurrencyMessage);
+                }
+                catch (DbUpdateException ex) when (IsUniqueViolation(ex, out _))
+                {
+                    // mold_code is never written here, so the only unique index an update can hit is the serial number's.
+                    throw new ConflictException($"A mold with serial number '{mold.SerialNumber}' already exists.");
+                }
+
+                mold.RowVersion = stub.RowVersion; // refreshed by SQL Server on save
+                mold.LifeState = stub.LifeState;   // recomputed by SQL Server on save
+
+                // The caller's full mold (it carries the system-managed cycle start the stub does not write), evaluated
+                // while the updated row is exclusively locked by this transaction.
+                if (afterSave is not null)
+                {
+                    await afterSave(mold, cancellationToken);
+                }
+
+                if (transaction is not null)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                }
+            });
+        }
+        finally
+        {
+            if (stub is not null) _dbContext.Entry(stub).State = EntityState.Detached;
         }
 
-        mold.RowVersion = stub.RowVersion; // refreshed by SQL Server on save
-        mold.LifeState = stub.LifeState;   // recomputed by SQL Server on save
-        entry.State = EntityState.Detached;
         return mold;
     }
 

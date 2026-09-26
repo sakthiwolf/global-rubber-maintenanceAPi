@@ -59,6 +59,15 @@ public static class DependencyInjection
         services.AddScoped<IPermissionRepository, PermissionRepository>();
         services.AddScoped<IAuditLogRepository, AuditLogRepository>();
         services.AddScoped<IApplicationLogRepository, ApplicationLogRepository>();
+        services.AddScoped<IBreakdownTypeRepository, BreakdownTypeRepository>();
+        services.AddScoped<IMaintenanceChecklistRepository, MaintenanceChecklistRepository>();
+        services.AddScoped<IProductionEntryRepository, ProductionEntryRepository>();
+        services.AddScoped<IMachinePmRepository, MachinePmRepository>();
+        services.AddScoped<IMoldPmRepository, MoldPmRepository>();
+        services.AddScoped<INotificationRepository, NotificationRepository>();
+        services.AddScoped<ISparePartUsageRepository, SparePartUsageRepository>();
+        services.AddScoped<IMachineBreakdownRepository, MachineBreakdownRepository>();
+        services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 
         services.AddOptions<JwtOptions>()
             .Bind(configuration.GetSection(JwtOptions.SectionName))
@@ -67,10 +76,12 @@ public static class DependencyInjection
             .Validate(o => !string.IsNullOrWhiteSpace(o.Secret) && o.Secret.Length >= 32,
                 "Jwt:Secret must be configured and at least 32 characters long.")
             .Validate(o => o.ExpirationMinutes > 0, "Jwt:ExpirationMinutes must be greater than 0.")
+            .Validate(o => o.RefreshTokenDays > 0, "Jwt:RefreshTokenDays must be greater than 0.")
             .ValidateOnStart();
 
         services.AddSingleton<Application.Interfaces.IPasswordHasher, Identity.PasswordHasher>();
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
+        services.AddSingleton<IRefreshTokenGenerator, RefreshTokenGenerator>();
 
         var healthChecksBuilder = services.AddHealthChecks();
 

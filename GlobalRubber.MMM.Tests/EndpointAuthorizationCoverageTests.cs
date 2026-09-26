@@ -19,12 +19,19 @@ public class EndpointAuthorizationCoverageTests
     // Deliberately not permission-gated. Anything added here needs a reason:
     //   Auth.Login .............. anonymous by definition (it issues the token)
     //   Auth.GetMyPermissions ... any authenticated user reads their OWN matrix (401 without a token)
+    //   Auth.Refresh ............ anonymous by necessity: called when the access token has expired (the refresh token is the credential)
+    //   Auth.Logout ............. any authenticated user revokes their OWN refresh token (401 without a token)
     //   System.Ping ............. anonymous liveness probe
+    //   Notification.GetMine .... any authenticated user reads THEIR notifications; the service filters them to the
+    //                             modules the user's role can View (401 without a token)
     private static readonly HashSet<string> OpenEndpoints = new()
     {
         "AuthController.Login",
         "AuthController.GetMyPermissions",
+        "AuthController.Refresh",
+        "AuthController.Logout",
         "SystemController.Ping",
+        "NotificationController.GetMine",
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Method, HttpMethodAttribute Http)> Endpoints() =>

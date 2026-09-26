@@ -15,10 +15,10 @@ public static class WebApplicationExtensions
     {
         app.UseExceptionHandler();
 
-        if (app.Environment.IsDevelopment())
+        // Always in Development; elsewhere only when Swagger:Enabled is true (appsettings.json).
+        var swagger = app.Configuration.GetSection(SwaggerOptions.SectionName).Get<SwaggerOptions>() ?? new SwaggerOptions();
+        if (app.Environment.IsDevelopment() || swagger.Enabled)
         {
-            var swagger = app.Configuration.GetSection(SwaggerOptions.SectionName).Get<SwaggerOptions>() ?? new SwaggerOptions();
-
             app.UseSwagger();
             app.UseSwaggerUI(options =>
             {

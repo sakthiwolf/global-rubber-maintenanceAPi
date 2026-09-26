@@ -3,6 +3,7 @@ using GlobalRubber.MMM.Application.Common;
 using GlobalRubber.MMM.Application.DTOs;
 using GlobalRubber.MMM.Application.Interfaces;
 using GlobalRubber.MMM.Application.Interfaces.Repositories;
+using GlobalRubber.MMM.Domain.Constants;
 using GlobalRubber.MMM.Domain.Entities;
 using Microsoft.Extensions.Logging;
 
@@ -102,7 +103,17 @@ public sealed class SparePartService : ISparePartService
             CreatedBy = actingUserId,
         };
 
-        var created = await _sparePartRepository.AddAsync(sparePart, cancellationToken);
+        // The stock ledger starts with the entered stock (migration 016).
+        var created = await _sparePartRepository.AddAsync(sparePart, new SparePartStockTransaction
+        {
+            TransactionType = SparePartStockTransactionType.Opening,
+            Quantity = sparePart.CurrentStock,
+            PreviousStock = 0,
+            NewStock = sparePart.CurrentStock,
+            ReferenceType = SparePartStockReferenceType.SparePart,
+            CreatedBy = actingUserId,
+            Remarks = "Opening stock entered on the Spare Part master.",
+        }, cancellationToken);
         created.Machine = machine; // set after the save so EF never tries to insert the referenced rows
         created.Vendor = vendor;
 
@@ -158,6 +169,22 @@ public sealed class SparePartService : ISparePartService
 
         var oldStockStatus = sparePart.StockStatus;
 
+        // A stock correction on the master (Q-06) is a ledger Adjustment - so every stock change stays explainable.
+        var stockEntry = fields.CurrentStock == sparePart.CurrentStock
+            ? null
+            : new SparePartStockTransaction
+            {
+                TransactionType = SparePartStockTransactionType.Adjustment,
+                Quantity = fields.CurrentStock - sparePart.CurrentStock,
+                PreviousStock = sparePart.CurrentStock,
+                NewStock = fields.CurrentStock,
+                ReferenceType = SparePartStockReferenceType.SparePart,
+                ReferenceId = sparePart.SparePartId,
+                ReferenceNo = sparePart.SparePartCode,
+                CreatedBy = actingUserId,
+                Remarks = "Stock corrected on the Spare Part master.",
+            };
+
         sparePart.SparePartName = fields.Name;
         sparePart.Category = fields.Category;
         sparePart.MachineId = machine?.MachineId;
@@ -171,7 +198,7 @@ public sealed class SparePartService : ISparePartService
         sparePart.UpdatedAt = _dateTimeProvider.UtcNow;
         sparePart.UpdatedBy = actingUserId;
 
-        var updated = await _sparePartRepository.UpdateAsync(sparePart, originalRowVersion!, cancellationToken);
+        var updated = await _sparePartRepository.UpdateAsync(sparePart, originalRowVersion!, stockEntry, cancellationToken);
         updated.Machine = machine;
         updated.Vendor = vendor;
 

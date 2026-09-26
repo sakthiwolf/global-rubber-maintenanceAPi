@@ -81,7 +81,7 @@ public sealed class SparePartRepository : ISparePartRepository
             .AnyAsync(s => s.IsActive && s.SparePartName.ToLower() == lowered && s.SparePartId != excludeSparePartId, cancellationToken);
     }
 
-    public async Task<SparePart> AddAsync(SparePart sparePart, CancellationToken cancellationToken)
+    public async Task<SparePart> AddAsync(SparePart sparePart, SparePartStockTransaction openingEntry, CancellationToken cancellationToken)
     {
         // The DbContext is configured with EnableRetryOnFailure, so a transaction we start ourselves must run inside
         // the execution strategy. If the caller already has a transaction open (a verification harness), join it.
@@ -92,6 +92,7 @@ public sealed class SparePartRepository : ISparePartRepository
             await strategy.ExecuteAsync(async () =>
             {
                 _dbContext.Entry(sparePart).State = EntityState.Detached; // a retry must not see the previous attempt's tracking
+                _dbContext.Entry(openingEntry).State = EntityState.Detached;
 
                 var ownsTransaction = _dbContext.Database.CurrentTransaction is null;
                 await using var transaction = ownsTransaction
@@ -102,6 +103,13 @@ public sealed class SparePartRepository : ISparePartRepository
                 _dbContext.SpareParts.Add(sparePart);
                 await _dbContext.SaveChangesAsync(cancellationToken); // also reads back the computed stock_status
 
+                // The stock ledger's first row for the part (migration 016).
+                openingEntry.SparePartId = sparePart.SparePartId;
+                openingEntry.ReferenceId = sparePart.SparePartId;
+                openingEntry.ReferenceNo = sparePart.SparePartCode;
+                _dbContext.SparePartStockTransactions.Add(openingEntry);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
                 if (transaction is not null)
                 {
                     await transaction.CommitAsync(cancellationToken);
@@ -111,6 +119,7 @@ public sealed class SparePartRepository : ISparePartRepository
         catch (DbUpdateException ex) when (IsUniqueViolation(ex))
         {
             _dbContext.Entry(sparePart).State = EntityState.Detached;
+            _dbContext.Entry(openingEntry).State = EntityState.Detached;
 
             // spare_part_code is the table's only unique key: the sequence and existing data disagree.
             throw new ConflictException("The spare part code could not be issued because it already exists. Please try again.");
@@ -118,56 +127,91 @@ public sealed class SparePartRepository : ISparePartRepository
 
         // Keep the generated id/code/row_version/stock_status but stop tracking: a later write attaches its own stub.
         _dbContext.Entry(sparePart).State = EntityState.Detached;
+        _dbContext.Entry(openingEntry).State = EntityState.Detached;
 
         return sparePart;
     }
 
-    public async Task<SparePart> UpdateAsync(SparePart sparePart, byte[] originalRowVersion, CancellationToken cancellationToken)
+    public async Task<SparePart> UpdateAsync(
+        SparePart sparePart, byte[] originalRowVersion, SparePartStockTransaction? stockEntry, CancellationToken cancellationToken)
     {
-        // Attach a stub (key + the caller's row version + only the values this operation writes): no navigations, and
-        // the row version the CALLER holds becomes the ORIGINAL value in the UPDATE's WHERE clause.
-        var stub = new SparePart
-        {
-            SparePartId = sparePart.SparePartId,
-            RowVersion = originalRowVersion,
-            SparePartName = sparePart.SparePartName,
-            Category = sparePart.Category,
-            MachineId = sparePart.MachineId,
-            PartNumber = sparePart.PartNumber,
-            Unit = sparePart.Unit,
-            MinimumStock = sparePart.MinimumStock,
-            CurrentStock = sparePart.CurrentStock,
-            VendorId = sparePart.VendorId,
-            StoreLocation = sparePart.StoreLocation,
-            UnitCost = sparePart.UnitCost,
-            UpdatedAt = sparePart.UpdatedAt,
-            UpdatedBy = sparePart.UpdatedBy,
-        };
-
-        var entry = _dbContext.Attach(stub);
-        foreach (var property in new[]
-        {
-            nameof(SparePart.SparePartName), nameof(SparePart.Category), nameof(SparePart.MachineId), nameof(SparePart.PartNumber),
-            nameof(SparePart.Unit), nameof(SparePart.MinimumStock), nameof(SparePart.CurrentStock), nameof(SparePart.VendorId),
-            nameof(SparePart.StoreLocation), nameof(SparePart.UnitCost), nameof(SparePart.UpdatedAt), nameof(SparePart.UpdatedBy),
-        })
-        {
-            entry.Property(property).IsModified = true;
-        }
+        // The DbContext is configured with EnableRetryOnFailure, so a transaction we start ourselves must run inside the
+        // execution strategy. If the caller already has a transaction open (a verification harness), join it.
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+        SparePart? stub = null;
 
         try
         {
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await strategy.ExecuteAsync(async () =>
+            {
+                if (stub is not null) _dbContext.Entry(stub).State = EntityState.Detached; // a retry starts clean
+                if (stockEntry is not null) _dbContext.Entry(stockEntry).State = EntityState.Detached;
+
+                var ownsTransaction = _dbContext.Database.CurrentTransaction is null;
+                await using var transaction = ownsTransaction ? await _dbContext.Database.BeginTransactionAsync(cancellationToken) : null;
+
+                // Attach a stub (key + the caller's row version + only the values this operation writes): no navigations,
+                // and the row version the CALLER holds becomes the ORIGINAL value in the UPDATE's WHERE clause.
+                stub = new SparePart
+                {
+                    SparePartId = sparePart.SparePartId,
+                    RowVersion = originalRowVersion,
+                    SparePartName = sparePart.SparePartName,
+                    Category = sparePart.Category,
+                    MachineId = sparePart.MachineId,
+                    PartNumber = sparePart.PartNumber,
+                    Unit = sparePart.Unit,
+                    MinimumStock = sparePart.MinimumStock,
+                    CurrentStock = sparePart.CurrentStock,
+                    VendorId = sparePart.VendorId,
+                    StoreLocation = sparePart.StoreLocation,
+                    UnitCost = sparePart.UnitCost,
+                    UpdatedAt = sparePart.UpdatedAt,
+                    UpdatedBy = sparePart.UpdatedBy,
+                };
+
+                var entry = _dbContext.Attach(stub);
+                foreach (var property in new[]
+                {
+                    nameof(SparePart.SparePartName), nameof(SparePart.Category), nameof(SparePart.MachineId), nameof(SparePart.PartNumber),
+                    nameof(SparePart.Unit), nameof(SparePart.MinimumStock), nameof(SparePart.CurrentStock), nameof(SparePart.VendorId),
+                    nameof(SparePart.StoreLocation), nameof(SparePart.UnitCost), nameof(SparePart.UpdatedAt), nameof(SparePart.UpdatedBy),
+                })
+                {
+                    entry.Property(property).IsModified = true;
+                }
+
+                try
+                {
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    throw new ConflictException(ConcurrencyMessage);
+                }
+
+                // The stock changed on the master: its Adjustment ledger row, same transaction (migration 016).
+                if (stockEntry is not null)
+                {
+                    stockEntry.SparePartId = sparePart.SparePartId;
+                    _dbContext.SparePartStockTransactions.Add(stockEntry);
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+
+                if (transaction is not null)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                }
+            });
         }
-        catch (DbUpdateConcurrencyException)
+        finally
         {
-            entry.State = EntityState.Detached;
-            throw new ConflictException(ConcurrencyMessage);
+            if (stub is not null) _dbContext.Entry(stub).State = EntityState.Detached;
+            if (stockEntry is not null) _dbContext.Entry(stockEntry).State = EntityState.Detached;
         }
 
-        sparePart.RowVersion = stub.RowVersion;   // refreshed by SQL Server on save
+        sparePart.RowVersion = stub!.RowVersion;   // refreshed by SQL Server on save
         sparePart.StockStatus = stub.StockStatus; // recomputed by SQL Server on save
-        entry.State = EntityState.Detached;
         return sparePart;
     }
 

@@ -1,15 +1,20 @@
 using GlobalRubber.MMM.Application.Interfaces;
+using GlobalRubber.MMM.Domain.Common;
 
 namespace GlobalRubber.MMM.Infrastructure.Services;
 
 /// <summary>
-/// Default <see cref="IDateTimeProvider"/> implementation, backed by the system clock.
+/// Default <see cref="IDateTimeProvider"/> implementation, backed by the system clock. "Today" is the plant's date
+/// (India Standard Time - see <see cref="PlantTime"/>).
 /// </summary>
 public sealed class DateTimeProvider : IDateTimeProvider
 {
+    public static readonly TimeSpan PlantUtcOffset = PlantTime.UtcOffset;
+
     public DateTime UtcNow => DateTime.UtcNow;
 
-    public DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
-    // NOTE: once the plant's IST offset is confirmed (see system analysis Q-39), this should
-    // convert UtcNow into IST before taking the date, rather than using UTC directly.
+    public DateOnly Today => PlantDate(DateTime.UtcNow);
+
+    /// <summary>The plant's calendar date at the given UTC instant (e.g. 2026-09-24 20:00 UTC is 2026-09-25 in IST).</summary>
+    public static DateOnly PlantDate(DateTime utcNow) => PlantTime.ToPlantDate(utcNow);
 }

@@ -18,4 +18,7 @@ public sealed class JwtOptions
     public string Secret { get; init; } = string.Empty;
 
     public int ExpirationMinutes { get; init; } = 15;
+
+    /// <summary>Refresh-token lifetime (system analysis 17.5: "rotating refresh token (7 days)").</summary>
+    public int RefreshTokenDays { get; init; } = 7;
 }

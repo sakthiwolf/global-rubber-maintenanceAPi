@@ -10,5 +10,12 @@ public sealed class AuthResponseDto
 {
     public string Token { get; init; } = string.Empty;
     public DateTime ExpiresAtUtc { get; init; }
+
+    /// <summary>
+    /// The rotating refresh token (raw - returned only here, stored only as a hash). Exchange it at POST /auth/refresh for a
+    /// new access token before/after the access token expires; each refresh token works once.
+    /// </summary>
+    public string RefreshToken { get; init; } = string.Empty;
+    public DateTime RefreshTokenExpiresAtUtc { get; init; }
     public UserDto User { get; init; } = null!;
 }

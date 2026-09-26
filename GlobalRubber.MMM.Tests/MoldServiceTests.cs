@@ -23,9 +23,11 @@ public class MoldServiceTests
         var departments = new InMemoryDepartmentRepository(DepartmentTestData.Departments());
         var employees = new InMemoryEmployeeRepository(EmployeeTestData.Employees(), departments);
         var products = new InMemoryProductRepository(ProductTestData.Products());
-        var molds = new InMemoryMoldRepository(MoldTestData.Molds(), products, employees);
+        var moldList = MoldTestData.Molds();
+        var molds = new InMemoryMoldRepository(moldList, products, employees);
         var audit = new RecordingAuditLog();
-        var service = new MoldService(molds, products, employees, users, new FixedClock(), auditOverride ?? audit, NullLogger<MoldService>.Instance);
+        var evaluator = MoldPmTestFactory.Evaluator(new InMemoryMoldPmRepository(moldList), new InMemoryNotificationRepository(), new FixedClock(), auditOverride ?? audit);
+        var service = new MoldService(molds, evaluator, products, employees, users, new FixedClock(), auditOverride ?? audit, NullLogger<MoldService>.Instance);
         return new Sut(service, molds, audit, users);
     }
 

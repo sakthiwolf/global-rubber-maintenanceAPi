@@ -33,7 +33,8 @@ public class MoldEndpointTests : IClassFixture<ApiWebApplicationFactory>
         var departments = new InMemoryDepartmentRepository(DepartmentTestData.Departments());
         var employees = new InMemoryEmployeeRepository(EmployeeTestData.Employees(), departments);
         var products = new InMemoryProductRepository(ProductTestData.Products());
-        var molds = new InMemoryMoldRepository(MoldTestData.Molds(), products, employees);
+        var moldList = MoldTestData.Molds();
+        var molds = new InMemoryMoldRepository(moldList, products, employees);
         var audit = new RecordingAuditLog();
         var authorization = decide is null ? new StubPermissionAuthorization(permissionGranted) : new StubPermissionAuthorization(decide);
 
@@ -41,6 +42,10 @@ public class MoldEndpointTests : IClassFixture<ApiWebApplicationFactory>
         {
             builder.ConfigureTestServices(services =>
             {
+                services.RemoveAll<IMoldPmRepository>();
+                services.AddSingleton<IMoldPmRepository>(new InMemoryMoldPmRepository(moldList));
+                services.RemoveAll<INotificationRepository>();
+                services.AddSingleton<INotificationRepository>(new InMemoryNotificationRepository());
                 services.RemoveAll<IMoldRepository>();
                 services.AddSingleton<IMoldRepository>(molds);
                 services.RemoveAll<IProductRepository>();

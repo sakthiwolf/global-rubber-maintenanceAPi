@@ -19,6 +19,7 @@ public class GlobalRubberDbContext : DbContext
     public DbSet<Module> Modules => Set<Module>();
     public DbSet<Permission> Permissions => Set<Permission>();
     public DbSet<User> Users => Set<User>();
+    public DbSet<UserRefreshToken> UserRefreshTokens => Set<UserRefreshToken>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<Employee> Employees => Set<Employee>();
     public DbSet<Vendor> Vendors => Set<Vendor>();
@@ -27,9 +28,22 @@ public class GlobalRubberDbContext : DbContext
     public DbSet<Mold> Molds => Set<Mold>();
     public DbSet<MaintenanceType> MaintenanceTypes => Set<MaintenanceType>();
     public DbSet<SparePart> SpareParts => Set<SparePart>();
+    public DbSet<MaintenanceChecklist> MaintenanceChecklists => Set<MaintenanceChecklist>();
+    public DbSet<MaintenanceChecklistItem> MaintenanceChecklistItems => Set<MaintenanceChecklistItem>();
+    public DbSet<ProductionEntry> ProductionEntries => Set<ProductionEntry>();
+    public DbSet<MachinePm> MachinePms => Set<MachinePm>();
+    public DbSet<MachinePmChecklistItem> MachinePmChecklistItems => Set<MachinePmChecklistItem>();
+    public DbSet<MoldPm> MoldPms => Set<MoldPm>();
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<SparePartUsage> SparePartUsages => Set<SparePartUsage>();
+    public DbSet<SparePartStockTransaction> SparePartStockTransactions => Set<SparePartStockTransaction>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<AuditLogDetail> AuditLogDetails => Set<AuditLogDetail>();
     public DbSet<ApplicationLog> ApplicationLogs => Set<ApplicationLog>();
+
+    public DbSet<BreakdownType> BreakdownTypes { get; set; }
+
+    public DbSet<MachineBreakdown> MachineBreakdowns => Set<MachineBreakdown>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

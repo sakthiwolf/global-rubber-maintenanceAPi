@@ -25,8 +25,17 @@ public class CreateMoldRequest
     public int? WarningShots { get; init; }
     public int? ReplacementShots { get; init; }
 
-    /// <summary>Optional (nullable column). The form defaults it to 50,000.</summary>
+    /// <summary>
+    /// The usage-based PM interval in shots (migration 014). Optional: blank = usage-based PM disabled; otherwise &gt; 0.
+    /// The form defaults it to 50,000.
+    /// </summary>
     public int? MaintenanceFrequencyShots { get; init; }
+
+    /// <summary>
+    /// PM warning margin in REMAINING shots (migration 014): the warning is raised when 0 &lt; remaining &lt;= this.
+    /// Optional; when entered it needs an interval and must be &gt; 0 and below it.
+    /// </summary>
+    public int? PmWarningShots { get; init; }
 
     public int? ResponsibleEmployeeId { get; init; }
 

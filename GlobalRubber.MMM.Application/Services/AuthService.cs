@@ -2,6 +2,7 @@ using GlobalRubber.MMM.Application.Common;
 using GlobalRubber.MMM.Application.DTOs;
 using GlobalRubber.MMM.Application.Interfaces;
 using GlobalRubber.MMM.Application.Interfaces.Repositories;
+using GlobalRubber.MMM.Domain.Entities;
 
 namespace GlobalRubber.MMM.Application.Services;
 
@@ -18,30 +19,41 @@ namespace GlobalRubber.MMM.Application.Services;
 /// "Login success, failed login (UserId null, LoginId in Description), logout, password
 /// change, lockout, role/permission change" - failed login is explicitly required there, not
 /// invented here.
+///
+/// Sessions (system analysis 17.5 / 18.1): login returns a short-lived JWT access token (Jwt:ExpirationMinutes) plus a
+/// rotating refresh token (Jwt:RefreshTokenDays), stored only as a hash in security.user_refresh_token. POST
+/// /auth/refresh exchanges it - once - for a new pair, so an active user stays signed in; POST /auth/logout revokes it.
 /// </summary>
 public sealed class AuthService : IAuthService
 {
     private const string InvalidCredentialsMessage = "Invalid login ID or password.";
     private const string SecurityModule = "Security"; // matches the analysis doc's own "Event class" column
+    private const string SessionExpiredMessage = "Your session has expired. Please sign in again.";
 
     private readonly IUserRepository _userRepository;
     private readonly IPasswordHasher _passwordHasher;
     private readonly IJwtTokenService _jwtTokenService;
     private readonly IDateTimeProvider _dateTimeProvider;
     private readonly IAuditLogService _auditLogService;
+    private readonly IRefreshTokenRepository _refreshTokenRepository;
+    private readonly IRefreshTokenGenerator _refreshTokenGenerator;
 
     public AuthService(
         IUserRepository userRepository,
         IPasswordHasher passwordHasher,
         IJwtTokenService jwtTokenService,
         IDateTimeProvider dateTimeProvider,
-        IAuditLogService auditLogService)
+        IAuditLogService auditLogService,
+        IRefreshTokenRepository refreshTokenRepository,
+        IRefreshTokenGenerator refreshTokenGenerator)
     {
         _userRepository = userRepository;
         _passwordHasher = passwordHasher;
         _jwtTokenService = jwtTokenService;
         _dateTimeProvider = dateTimeProvider;
         _auditLogService = auditLogService;
+        _refreshTokenRepository = refreshTokenRepository;
+        _refreshTokenGenerator = refreshTokenGenerator;
     }
 
     public async Task<AuthResponseDto> LoginAsync(LoginRequest request, string? ipAddress, CancellationToken cancellationToken)
@@ -84,6 +96,11 @@ public sealed class AuthService : IAuthService
         user.LastLoginAt = now;
 
         var (token, expiresAtUtc) = _jwtTokenService.GenerateAccessToken(user);
+        var (refreshToken, refreshTokenHash, refreshExpiresAtUtc) = _refreshTokenGenerator.Create(now);
+        await _refreshTokenRepository.AddAsync(new UserRefreshToken
+        {
+            UserId = user.UserId, TokenHash = refreshTokenHash, ExpiresAt = refreshExpiresAtUtc, CreatedAt = now, CreatedByIp = ipAddress,
+        }, cancellationToken);
 
         // Authentication -> password verified -> JWT generated -> audit login success -> return.
         await _auditLogService.LogAsync(new AuditLogEntry
@@ -103,7 +120,77 @@ public sealed class AuthService : IAuthService
         {
             Token = token,
             ExpiresAtUtc = expiresAtUtc,
+            RefreshToken = refreshToken,
+            RefreshTokenExpiresAtUtc = refreshExpiresAtUtc,
             User = UserService.MapToDto(user),
         };
+    }
+
+    public async Task<AuthResponseDto> RefreshAsync(RefreshTokenRequest request, string? ipAddress, CancellationToken cancellationToken)
+    {
+        var presented = request.RefreshToken?.Trim();
+        if (string.IsNullOrEmpty(presented))
+        {
+            throw new UnauthorizedAccessException(SessionExpiredMessage);
+        }
+
+        var now = _dateTimeProvider.UtcNow;
+        var presentedHash = _refreshTokenGenerator.Hash(presented);
+        var stored = await _refreshTokenRepository.GetByHashAsync(presentedHash, cancellationToken);
+        if (stored is null || stored.RevokedAt is not null || stored.ExpiresAt <= now)
+        {
+            throw new UnauthorizedAccessException(SessionExpiredMessage);
+        }
+
+        // BR-31: an inactive (or removed) user cannot keep a session going any more than they can log in.
+        var user = await _userRepository.GetByIdAsync(stored.UserId, cancellationToken);
+        if (user is null || !user.IsActive)
+        {
+            await _refreshTokenRepository.RevokeAsync(presentedHash, stored.UserId, now, ipAddress, cancellationToken);
+            throw new UnauthorizedAccessException(SessionExpiredMessage);
+        }
+
+        var (refreshToken, refreshTokenHash, refreshExpiresAtUtc) = _refreshTokenGenerator.Create(now);
+        var rotated = await _refreshTokenRepository.RotateAsync(presentedHash, new UserRefreshToken
+        {
+            UserId = user.UserId, TokenHash = refreshTokenHash, ExpiresAt = refreshExpiresAtUtc, CreatedAt = now, CreatedByIp = ipAddress,
+        }, now, ipAddress, cancellationToken);
+        if (!rotated)
+        {
+            throw new UnauthorizedAccessException(SessionExpiredMessage); // used by a concurrent request a moment ago
+        }
+
+        var (token, expiresAtUtc) = _jwtTokenService.GenerateAccessToken(user);
+        return new AuthResponseDto
+        {
+            Token = token,
+            ExpiresAtUtc = expiresAtUtc,
+            RefreshToken = refreshToken,
+            RefreshTokenExpiresAtUtc = refreshExpiresAtUtc,
+            User = UserService.MapToDto(user),
+        };
+    }
+
+    public async Task LogoutAsync(RefreshTokenRequest request, int userId, string? ipAddress, CancellationToken cancellationToken)
+    {
+        var presented = request.RefreshToken?.Trim();
+        if (!string.IsNullOrEmpty(presented))
+        {
+            await _refreshTokenRepository.RevokeAsync(_refreshTokenGenerator.Hash(presented), userId, _dateTimeProvider.UtcNow, ipAddress, cancellationToken);
+        }
+
+        var user = await _userRepository.GetByIdAsync(userId, cancellationToken);
+        await _auditLogService.LogAsync(new AuditLogEntry
+        {
+            UserId = userId,
+            UserName = user?.UserName ?? "Unknown",
+            Module = SecurityModule,
+            Action = "Logout",
+            EntityName = "User",
+            EntityId = userId,
+            RecordRef = user?.UserCode,
+            Description = $"{user?.UserName ?? "User " + userId} logged out.",
+            IpAddress = ipAddress,
+        }, cancellationToken);
     }
 }

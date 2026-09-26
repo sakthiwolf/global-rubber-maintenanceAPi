@@ -30,10 +30,12 @@ public interface IMoldRepository
     /// <summary>
     /// Saves the editable fields (including Status and CurrentUsageShots) plus UpdatedAt/UpdatedBy of a mold loaded
     /// through <see cref="GetByIdAsync"/>. Never MoldCode or the creation columns; LifeState is recomputed by SQL Server
-    /// and read back. <paramref name="originalRowVersion"/> is the concurrency guard.
+    /// and read back. <paramref name="originalRowVersion"/> is the concurrency guard. PmCycleStartShots is never written
+    /// here (system-managed). <paramref name="afterSave"/> runs in the SAME transaction after the update (the row is then
+    /// exclusively locked) - the automatic Mold PM evaluation of the saved values.
     /// </summary>
     /// <exception cref="GlobalRubber.MMM.Application.Common.ConflictException">Modified by someone else since <paramref name="originalRowVersion"/>, or the serial number already exists.</exception>
-    Task<Mold> UpdateAsync(Mold mold, byte[] originalRowVersion, CancellationToken cancellationToken);
+    Task<Mold> UpdateAsync(Mold mold, byte[] originalRowVersion, Func<Mold, CancellationToken, Task>? afterSave, CancellationToken cancellationToken);
 
     /// <summary>
     /// Retires the mold: persists ONLY Status, UpdatedAt and UpdatedBy of a mold loaded through <see cref="GetByIdAsync"/>,

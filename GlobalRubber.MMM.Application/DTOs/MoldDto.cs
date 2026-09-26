@@ -27,8 +27,23 @@ public sealed class MoldDto
     public int MaximumShots { get; init; }
     public int WarningShots { get; init; }
     public int ReplacementShots { get; init; }
+    /// <summary>The usage-based PM interval; null = usage-based PM disabled.</summary>
     public int? MaintenanceFrequencyShots { get; init; }
+
+    /// <summary>Cumulative shots - the one authoritative counter.</summary>
     public int CurrentUsageShots { get; init; }
+
+    /// <summary>PM warning margin in remaining shots; null = no warning.</summary>
+    public int? PmWarningShots { get; init; }
+
+    /// <summary>Start of the current PM cycle (system-managed).</summary>
+    public int PmCycleStartShots { get; init; }
+
+    /// <summary>Cycle start + interval; null when PM is disabled.</summary>
+    public long? PmNextThresholdShots { get; init; }
+
+    /// <summary>Next threshold - current shots (0 or negative = due); null when PM is disabled.</summary>
+    public long? PmRemainingShots { get; init; }
     public int? ResponsibleEmployeeId { get; init; }
     public string? ResponsibleEmployeeName { get; init; }
 

@@ -41,7 +41,7 @@ public class AuthServiceTests
             new FakePasswordHasher("correct-password"),
             new FakeJwtTokenService(),
             new FixedDateTimeProvider(DateTime.UtcNow),
-            auditLogService ?? new FakeAuditLogService());
+            auditLogService ?? new FakeAuditLogService(), new InMemoryRefreshTokenRepository(), new SequentialRefreshTokenGenerator());
 
     [Fact]
     public async Task LoginAsync_ReturnsAuthResponse_AndUpdatesLastLoginAt_ForValidCredentials()
@@ -49,7 +49,7 @@ public class AuthServiceTests
         var userRepository = new FakeUserRepository(ActiveUser);
         var dateTimeProvider = new FixedDateTimeProvider(new DateTime(2026, 3, 1, 8, 0, 0, DateTimeKind.Utc));
         var service = new AuthService(userRepository, new FakePasswordHasher(correctPassword: "correct-password"),
-            new FakeJwtTokenService(), dateTimeProvider, new FakeAuditLogService());
+            new FakeJwtTokenService(), dateTimeProvider, new FakeAuditLogService(), new InMemoryRefreshTokenRepository(), new SequentialRefreshTokenGenerator());
 
         var result = await service.LoginAsync(new LoginRequest { LoginId = "admin", Password = "correct-password" }, "203.0.113.5", CancellationToken.None);
 
@@ -191,6 +191,137 @@ public class AuthServiceTests
         public DateOnly Today => DateOnly.FromDateTime(UtcNow);
     }
 
+    // ================================================================ refresh tokens (system analysis 17.5 / 18.1)
+
+    private sealed record RefreshSut(AuthService Service, InMemoryRefreshTokenRepository Tokens, MutableClock Clock, FakeAuditLogService Audit);
+
+    private sealed class MutableClock : IDateTimeProvider
+    {
+        public DateTime UtcNow { get; set; } = new(2026, 9, 25, 5, 0, 0, DateTimeKind.Utc);
+        public DateOnly Today => DateOnly.FromDateTime(UtcNow);
+    }
+
+    private static RefreshSut CreateRefreshSut(User? user = null)
+    {
+        var tokens = new InMemoryRefreshTokenRepository();
+        var clock = new MutableClock();
+        var audit = new FakeAuditLogService();
+        var service = new AuthService(new FakeUserRepository(user ?? ActiveUser), new FakePasswordHasher("correct-password"), new FakeJwtTokenService(),
+            clock, audit, tokens, new SequentialRefreshTokenGenerator());
+        return new RefreshSut(service, tokens, clock, audit);
+    }
+
+    private static Task<AuthResponseDto> Login(RefreshSut s) =>
+        s.Service.LoginAsync(new LoginRequest { LoginId = "admin", Password = "correct-password" }, "10.0.0.5", CancellationToken.None);
+
+    private static Task<AuthResponseDto> Refresh(RefreshSut s, string? token) =>
+        s.Service.RefreshAsync(new RefreshTokenRequest { RefreshToken = token }, "10.0.0.6", CancellationToken.None);
+
+    [Fact]
+    public async Task Login_AlsoIssuesARefreshToken_StoredOnlyAsAHash_ValidFor7Days()
+    {
+        var s = CreateRefreshSut();
+
+        var result = await Login(s);
+
+        Assert.Equal("rt-1", result.RefreshToken);
+        Assert.Equal(s.Clock.UtcNow.AddDays(7), result.RefreshTokenExpiresAtUtc);
+        var stored = Assert.Single(s.Tokens.Tokens);
+        Assert.Equal(("H(rt-1)", 1, "10.0.0.5"), (stored.TokenHash, stored.UserId, stored.CreatedByIp));
+        Assert.DoesNotContain(s.Tokens.Tokens, t => t.TokenHash == "rt-1"); // never the raw token
+    }
+
+    [Fact]
+    public async Task Refresh_AfterTheAccessTokenExpired_ReturnsANewPair_AndRotatesTheRefreshToken()
+    {
+        var s = CreateRefreshSut();
+        var login = await Login(s);
+        s.Clock.UtcNow = s.Clock.UtcNow.AddMinutes(40); // well past the 15-minute access token
+
+        var refreshed = await Refresh(s, login.RefreshToken);
+
+        Assert.Equal(("fake-jwt-token", "rt-2"), (refreshed.Token, refreshed.RefreshToken));
+        Assert.Equal("admin", refreshed.User.LoginId);
+        var old = s.Tokens.ByHash("H(rt-1)");
+        Assert.Equal((s.Clock.UtcNow, "H(rt-2)", "10.0.0.6"), (old.RevokedAt!.Value, old.ReplacedByTokenHash, old.RevokedByIp));
+        Assert.Null(s.Tokens.ByHash("H(rt-2)").RevokedAt);
+        Assert.Equal(s.Clock.UtcNow.AddDays(7), refreshed.RefreshTokenExpiresAtUtc); // an active user's session keeps sliding
+    }
+
+    [Fact]
+    public async Task ARefreshToken_WorksOnlyOnce()
+    {
+        var s = CreateRefreshSut();
+        var login = await Login(s);
+        await Refresh(s, login.RefreshToken);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Refresh(s, login.RefreshToken));
+        Assert.Equal(2, s.Tokens.Tokens.Count); // no third token
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("never-issued")]
+    public async Task AMissingOrUnknownRefreshToken_Is401(string? token)
+    {
+        var s = CreateRefreshSut();
+        await Login(s);
+
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Refresh(s, token));
+
+        Assert.Equal("Your session has expired. Please sign in again.", ex.Message);
+    }
+
+    [Fact]
+    public async Task AnExpiredRefreshToken_Is401()
+    {
+        var s = CreateRefreshSut();
+        var login = await Login(s);
+        s.Clock.UtcNow = s.Clock.UtcNow.AddDays(7).AddSeconds(1);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Refresh(s, login.RefreshToken));
+    }
+
+    [Fact]
+    public async Task AUserDeactivatedAfterLogin_CannotRefresh_AndTheTokenIsRevoked()
+    {
+        var user = ActiveUser;
+        var s = CreateRefreshSut(user);
+        var login = await Login(s);
+        user.IsActive = false;
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Refresh(s, login.RefreshToken));
+        Assert.NotNull(s.Tokens.ByHash("H(rt-1)").RevokedAt);
+    }
+
+    [Fact]
+    public async Task Logout_RevokesTheCallersRefreshToken_AndAuditsLogout()
+    {
+        var s = CreateRefreshSut();
+        var login = await Login(s);
+        s.Audit.LoggedEntries.Clear();
+
+        await s.Service.LogoutAsync(new RefreshTokenRequest { RefreshToken = login.RefreshToken }, 1, "10.0.0.7", CancellationToken.None);
+
+        Assert.Equal("10.0.0.7", s.Tokens.ByHash("H(rt-1)").RevokedByIp);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Refresh(s, login.RefreshToken));
+        var entry = Assert.Single(s.Audit.LoggedEntries);
+        Assert.Equal(("Logout", "Security", (int?)1), (entry.Action, entry.Module, entry.UserId));
+    }
+
+    [Fact]
+    public async Task Logout_CannotRevokeAnotherUsersToken()
+    {
+        var s = CreateRefreshSut();
+        var login = await Login(s);
+
+        await s.Service.LogoutAsync(new RefreshTokenRequest { RefreshToken = login.RefreshToken }, 99, null, CancellationToken.None);
+
+        Assert.Null(s.Tokens.ByHash("H(rt-1)").RevokedAt);
+    }
+
     private sealed class FakePasswordHasher : IPasswordHasher
     {
         private readonly string _correctPassword;
@@ -228,7 +359,7 @@ public class AuthServiceTests
             throw new NotSupportedException("Not needed by AuthServiceTests.");
 
         public Task<User?> GetByIdAsync(int userId, CancellationToken cancellationToken) =>
-            throw new NotSupportedException("Not needed by AuthServiceTests.");
+            Task.FromResult(_existingUser is not null && _existingUser.UserId == userId ? _existingUser : null);
 
         public Task<User?> GetByLoginIdForAuthenticationAsync(string loginId, CancellationToken cancellationToken) =>
             Task.FromResult(_existingUser is not null && _existingUser.LoginId == loginId ? _existingUser : null);

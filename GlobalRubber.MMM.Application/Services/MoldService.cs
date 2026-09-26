@@ -5,6 +5,7 @@ using GlobalRubber.MMM.Application.Interfaces;
 using GlobalRubber.MMM.Application.Interfaces.Repositories;
 using GlobalRubber.MMM.Domain.Constants;
 using GlobalRubber.MMM.Domain.Entities;
+using GlobalRubber.MMM.Domain.Rules;
 using Microsoft.Extensions.Logging;
 
 namespace GlobalRubber.MMM.Application.Services;
@@ -24,6 +25,10 @@ namespace GlobalRubber.MMM.Application.Services;
 /// - status: any of the five values on create and edit, as in the template (which values may be set manually is open
 ///   question Q-09). "Deactivate" (DELETE) sets Status = Retired - the table has no is_active column.
 /// Life state / life % / remaining shots follow section 8.2.
+/// Usage-based PM (migration 014): Maintenance Frequency (shots) is the PM interval (blank = disabled, else &gt; 0); the PM
+/// warning margin is optional and, when entered, needs an interval, &gt; 0 and below it. The cycle start is system-managed.
+/// Every update (usage correction, interval / warning change, reactivation from Retired) is evaluated by
+/// <see cref="IMoldPmEvaluator"/> in the same transaction, so a mold that is now due gets its automatic PM.
 /// </summary>
 public sealed class MoldService : IMoldService
 {
@@ -37,6 +42,7 @@ public sealed class MoldService : IMoldService
     private const int RemarksMaxLength = 500;         // remarks NVARCHAR(500)
 
     private readonly IMoldRepository _moldRepository;
+    private readonly IMoldPmEvaluator _moldPmEvaluator;
     private readonly IProductRepository _productRepository;
     private readonly IEmployeeRepository _employeeRepository;
     private readonly IUserRepository _userRepository;
@@ -46,6 +52,7 @@ public sealed class MoldService : IMoldService
 
     public MoldService(
         IMoldRepository moldRepository,
+        IMoldPmEvaluator moldPmEvaluator,
         IProductRepository productRepository,
         IEmployeeRepository employeeRepository,
         IUserRepository userRepository,
@@ -54,6 +61,7 @@ public sealed class MoldService : IMoldService
         ILogger<MoldService> logger)
     {
         _moldRepository = moldRepository;
+        _moldPmEvaluator = moldPmEvaluator;
         _productRepository = productRepository;
         _employeeRepository = employeeRepository;
         _userRepository = userRepository;
@@ -106,6 +114,8 @@ public sealed class MoldService : IMoldService
             WarningShots = fields.WarningShots,
             ReplacementShots = fields.ReplacementShots,
             MaintenanceFrequencyShots = fields.MaintenanceFrequencyShots,
+            PmWarningShots = fields.PmWarningShots,
+            PmCycleStartShots = 0, // the first cycle's threshold is the interval itself
             CurrentUsageShots = 0,
             ResponsibleEmployeeId = person?.EmployeeId,
             Status = fields.Status,
@@ -176,6 +186,7 @@ public sealed class MoldService : IMoldService
         Track("warning_shots", Num(mold.WarningShots), Num(fields.WarningShots));
         Track("replacement_shots", Num(mold.ReplacementShots), Num(fields.ReplacementShots));
         Track("maintenance_frequency_shots", NumOrNull(mold.MaintenanceFrequencyShots), NumOrNull(fields.MaintenanceFrequencyShots));
+        Track("pm_warning_shots", NumOrNull(mold.PmWarningShots), NumOrNull(fields.PmWarningShots));
         Track("current_usage_shots", Num(mold.CurrentUsageShots), Num(fields.CurrentUsageShots));
         Track("responsible_employee_code", oldPerson?.EmployeeCode, person?.EmployeeCode);
         Track("status", mold.Status, fields.Status);
@@ -194,6 +205,7 @@ public sealed class MoldService : IMoldService
         mold.WarningShots = fields.WarningShots;
         mold.ReplacementShots = fields.ReplacementShots;
         mold.MaintenanceFrequencyShots = fields.MaintenanceFrequencyShots;
+        mold.PmWarningShots = fields.PmWarningShots;
         mold.CurrentUsageShots = fields.CurrentUsageShots;
         mold.ResponsibleEmployeeId = person?.EmployeeId;
         mold.Status = fields.Status;
@@ -201,7 +213,11 @@ public sealed class MoldService : IMoldService
         mold.UpdatedAt = _dateTimeProvider.UtcNow;
         mold.UpdatedBy = actingUserId;
 
-        var updated = await _moldRepository.UpdateAsync(mold, originalRowVersion!, cancellationToken);
+        // The saved values are evaluated in the same transaction (a usage correction, a smaller interval or a reactivation
+        // can make the mold due or bring it into its warning margin).
+        var evaluation = MoldPmEvaluation.Nothing;
+        var updated = await _moldRepository.UpdateAsync(
+            mold, originalRowVersion!, async (saved, ct) => evaluation = await _moldPmEvaluator.EvaluateUsageAsync(saved, ct), cancellationToken);
         updated.Product = product;
         updated.ResponsibleEmployee = person;
 
@@ -213,6 +229,9 @@ public sealed class MoldService : IMoldService
             "MoldUpdated", updated, actingUserId, ipAddress,
             actor => $"{actor} updated mold '{updated.MoldName}' ({updated.MoldCode}). {changeSummary}",
             details, cancellationToken);
+
+        var actorName = await AuditUserNameResolver.ResolveAsync(_userRepository, _logger, actingUserId, cancellationToken);
+        await _moldPmEvaluator.WriteAuditAsync(evaluation, $"the update of mold {updated.MoldCode} by {actorName}", ipAddress, cancellationToken);
 
         return MapToDto(updated);
     }
@@ -289,7 +308,7 @@ public sealed class MoldService : IMoldService
     private sealed record MoldFields(
         string Name, int ProductId, string MoldType, int CavityCount, string? Manufacturer, string? SerialNumber,
         string? Location, string? StorageLocation, DateOnly? CommissionDate, int MaximumShots, int WarningShots,
-        int ReplacementShots, int? MaintenanceFrequencyShots, int CurrentUsageShots, int? ResponsibleEmployeeId,
+        int ReplacementShots, int? MaintenanceFrequencyShots, int? PmWarningShots, int CurrentUsageShots, int? ResponsibleEmployeeId,
         string Status, string? Remarks);
 
     // Trim everything, blank optional fields become null. One place so Create and Update can never disagree about what a
@@ -346,6 +365,15 @@ public sealed class MoldService : IMoldService
 
         if (currentUsage < 0) errors.Add("CurrentUsageShots cannot be negative."); // CK_mold_master_current_usage_shots
 
+        // Usage-based PM (migration 014): CK_mold_master_maintenance_frequency_shots / CK_mold_master_pm_warning_shots.
+        if (request.MaintenanceFrequencyShots is <= 0) errors.Add("Maintenance frequency (shots) must be greater than 0.");
+        if (request.PmWarningShots is { } pmWarning)
+        {
+            if (pmWarning <= 0) errors.Add("PM warning shots must be greater than 0.");
+            else if (request.MaintenanceFrequencyShots is null) errors.Add("PM warning shots need a maintenance frequency (shots).");
+            else if (request.MaintenanceFrequencyShots > 0 && pmWarning >= request.MaintenanceFrequencyShots) errors.Add("PM warning shots must be less than the maintenance frequency (shots).");
+        }
+
         if (statusInput is null) errors.Add("Status is required.");
         else if (status is null) errors.Add($"Status must be one of: {string.Join(", ", MoldStatus.All)}.");
 
@@ -364,7 +392,7 @@ public sealed class MoldService : IMoldService
         return new MoldFields(
             name, request.ProductId, moldType, cavityCount, manufacturer, serialNumber, location, storageLocation,
             request.CommissionDate, request.MaximumShots!.Value, request.WarningShots!.Value, request.ReplacementShots!.Value,
-            request.MaintenanceFrequencyShots, currentUsage, request.ResponsibleEmployeeId, status!, remarks);
+            request.MaintenanceFrequencyShots, request.PmWarningShots, currentUsage, request.ResponsibleEmployeeId, status!, remarks);
     }
 
     private static bool TryDecodeRowVersion(string value, out byte[]? bytes)
@@ -430,6 +458,12 @@ public sealed class MoldService : IMoldService
         ReplacementShots = mold.ReplacementShots,
         MaintenanceFrequencyShots = mold.MaintenanceFrequencyShots,
         CurrentUsageShots = mold.CurrentUsageShots,
+        PmWarningShots = mold.PmWarningShots,
+        PmCycleStartShots = mold.PmCycleStartShots,
+        PmNextThresholdShots = MoldPmRules.IsEnabled(mold.MaintenanceFrequencyShots)
+            ? MoldPmRules.NextThreshold(mold.PmCycleStartShots, mold.MaintenanceFrequencyShots!.Value) : null,
+        PmRemainingShots = MoldPmRules.IsEnabled(mold.MaintenanceFrequencyShots)
+            ? MoldPmRules.RemainingShots(mold.CurrentUsageShots, mold.PmCycleStartShots, mold.MaintenanceFrequencyShots!.Value) : null,
         ResponsibleEmployeeId = mold.ResponsibleEmployeeId,
         ResponsibleEmployeeName = mold.ResponsibleEmployee?.EmployeeName,
         ResponsibleEmployeeIsActive = mold.ResponsibleEmployee?.IsActive,

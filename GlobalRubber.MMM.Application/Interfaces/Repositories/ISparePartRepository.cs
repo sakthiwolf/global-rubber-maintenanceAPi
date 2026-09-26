@@ -19,7 +19,11 @@ public interface ISparePartRepository
     /// insert rolls the sequence increment back. Navigations are not saved - only the FK ids. StockStatus is read back.
     /// </summary>
     /// <exception cref="GlobalRubber.MMM.Application.Common.ConflictException">The issued code already exists.</exception>
-    Task<SparePart> AddAsync(SparePart sparePart, CancellationToken cancellationToken);
+    /// <summary>
+    /// Inserts the part (code from the SPARE_PART sequence) and, in the same transaction, its Opening stock ledger row
+    /// (<paramref name="openingEntry"/>; spare_part_id / reference id are filled in here).
+    /// </summary>
+    Task<SparePart> AddAsync(SparePart sparePart, SparePartStockTransaction openingEntry, CancellationToken cancellationToken);
 
     /// <summary>
     /// Saves the editable fields (including CurrentStock - owned by the master, Q-06) plus UpdatedAt/UpdatedBy of a spare
@@ -27,7 +31,11 @@ public interface ISparePartRepository
     /// recomputed by SQL Server and read back. <paramref name="originalRowVersion"/> is the concurrency guard.
     /// </summary>
     /// <exception cref="GlobalRubber.MMM.Application.Common.ConflictException">Modified by someone else (or removed) since <paramref name="originalRowVersion"/>.</exception>
-    Task<SparePart> UpdateAsync(SparePart sparePart, byte[] originalRowVersion, CancellationToken cancellationToken);
+    /// <remarks>
+    /// When <paramref name="stockEntry"/> is given (the current stock changed), its Adjustment ledger row is written in the
+    /// SAME transaction as the update - the previous stock it records is the one the caller's row version guarantees.
+    /// </remarks>
+    Task<SparePart> UpdateAsync(SparePart sparePart, byte[] originalRowVersion, SparePartStockTransaction? stockEntry, CancellationToken cancellationToken);
 
     /// <summary>
     /// Soft deactivation: persists ONLY IsActive, UpdatedAt and UpdatedBy of a spare part loaded through

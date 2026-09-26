@@ -12,7 +12,8 @@ namespace GlobalRubber.MMM.Tests;
 /// </summary>
 internal static class MoldTestData
 {
-    // 1 Seal Mold A (product 1, person 1, serial, 100k/500k = Normal, In Production)
+    // 1 Seal Mold A (product 1, person 1, serial, 100k/500k = Normal, In Production; PM every 50k, cycle from 100k as the
+    //   migration 014 backfill sets it - next PM threshold 150k)
     // 2 Gasket Mold (product 3 = inactive, person 3 = inactive, 460k = Warning, Available)
     // 3 Old Mold (Retired, product 2, 500k = Replace)
     public static List<Mold> Molds() => new()
@@ -22,7 +23,7 @@ internal static class MoldTestData
             MoldId = 1, MoldCode = "MLD-0001", MoldName = "Seal Mold A", ProductId = 1, MoldType = "Compression", CavityCount = 4,
             Manufacturer = "Precision", SerialNumber = "SM-1", Location = "MAC-0001", StorageLocation = "Rack A-1",
             CommissionDate = new DateOnly(2022, 1, 10), MaximumShots = 500000, WarningShots = 450000, ReplacementShots = 500000,
-            MaintenanceFrequencyShots = 50000, CurrentUsageShots = 100000, ResponsibleEmployeeId = 1, Status = "In Production",
+            MaintenanceFrequencyShots = 50000, PmCycleStartShots = 100000, CurrentUsageShots = 100000, ResponsibleEmployeeId = 1, Status = "In Production",
             LifeState = "Normal", Remarks = "Main", CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), CreatedBy = 1,
             RowVersion = new byte[] { 1 },
         },
@@ -85,6 +86,7 @@ internal sealed class InMemoryMoldRepository : IMoldRepository
         CavityCount = m.CavityCount, Manufacturer = m.Manufacturer, SerialNumber = m.SerialNumber, Location = m.Location,
         StorageLocation = m.StorageLocation, CommissionDate = m.CommissionDate, MaximumShots = m.MaximumShots,
         WarningShots = m.WarningShots, ReplacementShots = m.ReplacementShots, MaintenanceFrequencyShots = m.MaintenanceFrequencyShots,
+        PmWarningShots = m.PmWarningShots, PmCycleStartShots = m.PmCycleStartShots,
         CurrentUsageShots = m.CurrentUsageShots, ResponsibleEmployeeId = m.ResponsibleEmployeeId, Status = m.Status,
         LifeState = m.LifeState, Remarks = m.Remarks, CreatedAt = m.CreatedAt, CreatedBy = m.CreatedBy, UpdatedAt = m.UpdatedAt,
         UpdatedBy = m.UpdatedBy, RowVersion = (byte[])m.RowVersion.Clone(),
@@ -143,7 +145,7 @@ internal sealed class InMemoryMoldRepository : IMoldRepository
         return Task.FromResult(mold);
     }
 
-    public Task<Mold> UpdateAsync(Mold mold, byte[] originalRowVersion, CancellationToken cancellationToken)
+    public async Task<Mold> UpdateAsync(Mold mold, byte[] originalRowVersion, Func<Mold, CancellationToken, Task>? afterSave, CancellationToken cancellationToken)
     {
         UpdateCalls++;
         BeforeWrite?.Invoke(mold.MoldId);
@@ -168,6 +170,7 @@ internal sealed class InMemoryMoldRepository : IMoldRepository
         stored.WarningShots = mold.WarningShots;
         stored.ReplacementShots = mold.ReplacementShots;
         stored.MaintenanceFrequencyShots = mold.MaintenanceFrequencyShots;
+        stored.PmWarningShots = mold.PmWarningShots;
         stored.CurrentUsageShots = mold.CurrentUsageShots;
         stored.ResponsibleEmployeeId = mold.ResponsibleEmployeeId;
         stored.Status = mold.Status;
@@ -178,7 +181,14 @@ internal sealed class InMemoryMoldRepository : IMoldRepository
         stored.RowVersion = Next(stored.RowVersion);
         mold.RowVersion = stored.RowVersion;
         mold.LifeState = stored.LifeState;
-        return Task.FromResult(mold);
+
+        // The in-transaction evaluation of the saved values (automatic Mold PM).
+        if (afterSave is not null)
+        {
+            await afterSave(mold, cancellationToken);
+        }
+
+        return mold;
     }
 
     public Task<Mold> RetireAsync(Mold mold, CancellationToken cancellationToken)

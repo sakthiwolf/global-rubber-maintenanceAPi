@@ -15,5 +15,12 @@ public static class DocumentTypes
     public const string Machine = "MACHINE";
     public const string Mold = "MOLD";
     public const string MaintenanceType = "MAINTENANCE_TYPE";
+    public const string BreakdownType = "BREAKDOWN_TYPE";
+    public const string MaintenanceChecklist = "MAINTENANCE_CHECKLIST";
+    public const string ProductionEntry = "PRODUCTION_ENTRY";
+    public const string MachinePm = "MACHINE_PM";
+    public const string MoldPm = "MOLD_PM";
     public const string SparePart = "SPARE_PART";
+    public const string MachineBreakdown = "MACHINE_BREAKDOWN";
+    public const string SparePartUsage = "SPARE_PART_USAGE";
 }

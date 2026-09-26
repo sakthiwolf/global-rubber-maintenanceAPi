@@ -66,6 +66,46 @@ public class AuthControllerTests : IClassFixture<ApiWebApplicationFactory>
         Assert.False(document.RootElement.GetProperty("success").GetBoolean());
     }
 
+    [Fact]
+    public async Task Refresh_IsAnonymous_Returns200_WithANewTokenPair_And401_ForABadToken()
+    {
+        var client = CreateClientWithFakeAuthService(FakeAuthService.AcceptsAdminLogin()); // no bearer token at all
+
+        var ok = await client.PostAsJsonAsync("/api/v1/auth/refresh", new RefreshTokenRequest { RefreshToken = "good-refresh" });
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        using (var document = JsonDocument.Parse(await ok.Content.ReadAsStringAsync()))
+        {
+            var data = document.RootElement.GetProperty("data");
+            Assert.Equal(("new-jwt-token", "next-refresh"), (data.GetProperty("token").GetString(), data.GetProperty("refreshToken").GetString()));
+            Assert.True(data.TryGetProperty("refreshTokenExpiresAtUtc", out _));
+        }
+
+        var bad = await client.PostAsJsonAsync("/api/v1/auth/refresh", new RefreshTokenRequest { RefreshToken = "used-or-unknown" });
+        Assert.Equal(HttpStatusCode.Unauthorized, bad.StatusCode);
+        Assert.DoesNotContain("Exception", await bad.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Logout_RequiresAToken_ThenRevokesTheCallersOwnRefreshToken_204()
+    {
+        var fake = FakeAuthService.AcceptsAdminLogin();
+        var factory = _factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IAuthService>();
+            services.AddSingleton<IAuthService>(fake);
+        }));
+        var anonymous = factory.CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsJsonAsync("/api/v1/auth/logout", new RefreshTokenRequest { RefreshToken = "rt" })).StatusCode);
+        Assert.Empty(fake.Logouts);
+
+        var client = factory.CreateClient();
+        TestAuth.Authenticate(client, factory, "ADMIN", 7);
+        var response = await client.PostAsJsonAsync("/api/v1/auth/logout", new RefreshTokenRequest { RefreshToken = "rt" });
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(("rt", 7), Assert.Single(fake.Logouts)); // the user id comes from the token, never the body
+    }
+
     private sealed class FakeAuthService : IAuthService
     {
         public static FakeAuthService AcceptsAdminLogin() => new();
@@ -92,6 +132,28 @@ public class AuthControllerTests : IClassFixture<ApiWebApplicationFactory>
                     IsActive = true,
                 },
             });
+        }
+
+        public List<(string? Token, int UserId)> Logouts { get; } = new();
+
+        public Task<AuthResponseDto> RefreshAsync(RefreshTokenRequest request, string? ipAddress, CancellationToken cancellationToken)
+        {
+            if (request.RefreshToken != "good-refresh")
+            {
+                throw new UnauthorizedAccessException("Your session has expired. Please sign in again.");
+            }
+
+            return Task.FromResult(new AuthResponseDto
+            {
+                Token = "new-jwt-token", ExpiresAtUtc = DateTime.UtcNow.AddMinutes(15), RefreshToken = "next-refresh", RefreshTokenExpiresAtUtc = DateTime.UtcNow.AddDays(7),
+                User = new UserDto { UserId = 1, UserCode = "USR-0001", LoginId = "admin", UserName = "Administrator", RoleId = 1, RoleName = "Administrator", IsActive = true },
+            });
+        }
+
+        public Task LogoutAsync(RefreshTokenRequest request, int userId, string? ipAddress, CancellationToken cancellationToken)
+        {
+            Logouts.Add((request.RefreshToken, userId));
+            return Task.CompletedTask;
         }
     }
 }

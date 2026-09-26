@@ -10,4 +10,10 @@ public sealed class SwaggerOptions
     public string Description { get; init; } = string.Empty;
     public string ContactName { get; init; } = string.Empty;
     public string ContactEmail { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Serve Swagger UI / swagger.json outside Development too (e.g. production). Always on in Development.
+    /// Every API endpoint still requires its JWT + permission - Swagger only documents them.
+    /// </summary>
+    public bool Enabled { get; init; }
 }

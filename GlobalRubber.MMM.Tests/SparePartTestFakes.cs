@@ -122,7 +122,10 @@ internal sealed class InMemorySparePartRepository : ISparePartRepository
         Task.FromResult(_parts.Any(s =>
             s.IsActive && s.SparePartId != excludeSparePartId && string.Equals(s.SparePartName, name, StringComparison.OrdinalIgnoreCase)));
 
-    public Task<SparePart> AddAsync(SparePart sparePart, CancellationToken cancellationToken)
+    /// <summary>The stock ledger rows the repository was asked to write (Opening on add, Adjustment on update).</summary>
+    public List<SparePartStockTransaction> Ledger { get; } = new();
+
+    public Task<SparePart> AddAsync(SparePart sparePart, SparePartStockTransaction openingEntry, CancellationToken cancellationToken)
     {
         AddCalls++;
         sparePart.SparePartId = _parts.Max(s => s.SparePartId) + 1;
@@ -130,10 +133,14 @@ internal sealed class InMemorySparePartRepository : ISparePartRepository
         sparePart.RowVersion = new byte[] { 1 };
         sparePart.StockStatus = SparePartTestData.StockStatusOf(sparePart);
         _parts.Add(CopyColumns(sparePart));
+        openingEntry.SparePartId = sparePart.SparePartId;
+        openingEntry.ReferenceId = sparePart.SparePartId;
+        openingEntry.ReferenceNo = sparePart.SparePartCode;
+        Ledger.Add(openingEntry);
         return Task.FromResult(sparePart);
     }
 
-    public Task<SparePart> UpdateAsync(SparePart sparePart, byte[] originalRowVersion, CancellationToken cancellationToken)
+    public Task<SparePart> UpdateAsync(SparePart sparePart, byte[] originalRowVersion, SparePartStockTransaction? stockEntry, CancellationToken cancellationToken)
     {
         UpdateCalls++;
         BeforeWrite?.Invoke(sparePart.SparePartId);
@@ -161,6 +168,12 @@ internal sealed class InMemorySparePartRepository : ISparePartRepository
         stored.RowVersion = Next(stored.RowVersion);
         sparePart.RowVersion = stored.RowVersion;
         sparePart.StockStatus = stored.StockStatus;
+        if (stockEntry is not null)
+        {
+            stockEntry.SparePartId = sparePart.SparePartId;
+            Ledger.Add(stockEntry);
+        }
+
         return Task.FromResult(sparePart);
     }
 

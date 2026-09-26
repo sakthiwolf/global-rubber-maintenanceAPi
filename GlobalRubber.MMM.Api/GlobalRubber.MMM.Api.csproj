@@ -15,6 +15,12 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
   </ItemGroup>
 
+  <!-- The server gets ONE settings file (appsettings.json). The local-only Development file (local SQL Server, sa
+       password, development signing key) is used by local runs but never published. -->
+  <ItemGroup>
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\GlobalRubber.MMM.Application\GlobalRubber.MMM.Application.csproj" />
     <ProjectReference Include="..\GlobalRubber.MMM.Infrastructure\GlobalRubber.MMM.Infrastructure.csproj" />

@@ -31,8 +31,7 @@ public sealed class MoldController : BaseApiController
     [ProducesResponseType(typeof(ApiResponse<PagedResult<MoldDto>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status403Forbidden)]
-    public async Task<ActionResult<ApiResponse<PagedResult<MoldDto>>>> GetAll(
-        [FromQuery] MoldListQuery query, CancellationToken cancellationToken)
+    public async Task<ActionResult<ApiResponse<PagedResult<MoldDto>>>> GetAll([FromQuery] MoldListQuery query, CancellationToken cancellationToken)
     {
         var result = await _moldService.GetAllAsync(query, cancellationToken);
 
@@ -66,8 +65,7 @@ public sealed class MoldController : BaseApiController
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status409Conflict)]
-    public async Task<ActionResult<ApiResponse<MoldDto>>> Create(
-        [FromBody] CreateMoldRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult<ApiResponse<MoldDto>>> Create([FromBody] CreateMoldRequest request, CancellationToken cancellationToken)
     {
         var mold = await _moldService.CreateAsync(
             request, GetAuthenticatedUserId(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);

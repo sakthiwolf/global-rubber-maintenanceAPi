@@ -2,6 +2,7 @@ using System.Text;
 using GlobalRubber.MMM.Api.Configuration;
 using GlobalRubber.MMM.Api.HealthChecks;
 using GlobalRubber.MMM.Api.Middlewares;
+using GlobalRubber.MMM.Application.Common;
 using GlobalRubber.MMM.Infrastructure.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
@@ -29,7 +30,12 @@ public static class ServiceCollectionExtensions
             .Bind(configuration.GetSection(ApplicationOptions.SectionName))
             .ValidateOnStart();
 
-        services.AddControllers();
+        services.AddControllers()
+            .AddJsonOptions(options =>
+            {
+                options.JsonSerializerOptions.Converters.Add(new TimeOnlyJsonConverter());
+                options.JsonSerializerOptions.Converters.Add(new NullableTimeOnlyJsonConverter());
+            });
         services.AddEndpointsApiExplorer();
 
         services.AddSwaggerFoundation(configuration);

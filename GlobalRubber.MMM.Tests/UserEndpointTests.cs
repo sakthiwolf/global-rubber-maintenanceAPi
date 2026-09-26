@@ -51,6 +51,8 @@ public class UserEndpointTests : IClassFixture<ApiWebApplicationFactory>
             {
                 services.RemoveAll<IUserRepository>();
                 services.AddSingleton<IUserRepository>(users);
+                services.RemoveAll<IRefreshTokenRepository>();
+                services.AddSingleton<IRefreshTokenRepository>(new InMemoryRefreshTokenRepository()); // login also issues a refresh token
                 services.RemoveAll<IRoleRepository>();
                 services.AddSingleton<IRoleRepository>(roles);
                 services.RemoveAll<IPermissionRepository>();

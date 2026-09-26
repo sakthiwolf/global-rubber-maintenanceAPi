@@ -22,6 +22,15 @@ public static class DependencyInjection
         services.AddScoped<IMachineService, MachineService>();
         services.AddScoped<IMoldService, MoldService>();
         services.AddScoped<IMaintenanceTypeService, MaintenanceTypeService>();
+        services.AddScoped<IBreakdownTypeService, BreakdownTypeService>();
+        services.AddScoped<IMaintenanceChecklistService, MaintenanceChecklistService>();
+        services.AddScoped<IProductionEntryService, ProductionEntryService>();
+        services.AddScoped<IMachinePmService, MachinePmService>();
+        services.AddScoped<IMoldPmService, MoldPmService>();
+        services.AddScoped<IMoldPmEvaluator, MoldPmEvaluator>();
+        services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<ISparePartUsageService, SparePartUsageService>();
+        services.AddScoped<IMachineBreakdownService, MachineBreakdownService>();
         services.AddScoped<ISparePartService, SparePartService>();
         services.AddScoped<IPermissionService, PermissionService>();
         services.AddScoped<IAuthService, AuthService>();
