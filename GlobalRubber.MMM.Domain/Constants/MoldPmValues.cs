@@ -54,6 +54,9 @@ public static class NotificationTypes
 
     /// <summary>A spare part's stock moved into Out of Stock (migration 016).</summary>
     public const string SparePartOutOfStock = "SparePartOutOfStock";
+
+    /// <summary>Exactly what CK_notification_transaction_type allows (migrations 014 + 016).</summary>
+    public static readonly IReadOnlyList<string> All = new[] { MoldPmWarning, MoldPmDue, SparePartLowStock, SparePartOutOfStock };
 }
 
 public static class NotificationSeverity
@@ -61,4 +64,7 @@ public static class NotificationSeverity
     public const string Info = "Info";
     public const string Warning = "Warning";
     public const string Critical = "Critical";
+
+    /// <summary>Exactly what CK_notification_transaction_severity allows.</summary>
+    public static readonly IReadOnlyList<string> All = new[] { Info, Warning, Critical };
 }

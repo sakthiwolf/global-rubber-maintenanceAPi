@@ -206,12 +206,44 @@ internal sealed class InMemoryNotificationRepository : INotificationRepository
         return Task.FromResult(NotificationWriteResult.Added);
     }
 
-    public Task<(IReadOnlyList<Notification> Items, int TotalCount)> GetForModulesAsync(
-        IReadOnlyCollection<string> moduleCodes, int pageNumber, int pageSize, CancellationToken cancellationToken)
+    /// <summary>Per-user read state (transactions.notification_read_transaction, migration 018).</summary>
+    public List<NotificationRead> Reads { get; } = new();
+
+    private UserNotification WithReadState(int userId, Notification n) =>
+        new(n, Reads.FirstOrDefault(r => r.UserId == userId && r.NotificationId == n.NotificationId)?.ReadAt);
+
+    private IEnumerable<Notification> Visible(IReadOnlyCollection<string> moduleCodes) =>
+        Items.Where(n => moduleCodes.Contains(n.ModuleCode)).OrderByDescending(n => n.CreatedAt).ThenByDescending(n => n.NotificationId);
+
+    public Task<(IReadOnlyList<UserNotification> Items, int TotalCount)> GetForUserAsync(
+        int userId, IReadOnlyCollection<string> moduleCodes, bool unreadOnly, int pageNumber, int pageSize, CancellationToken cancellationToken)
     {
-        var all = Items.Where(n => moduleCodes.Contains(n.ModuleCode)).OrderByDescending(n => n.CreatedAt).ToList();
-        IReadOnlyList<Notification> page = all.Skip((pageNumber - 1) * pageSize).Take(pageSize).ToList();
+        var all = Visible(moduleCodes).Select(n => WithReadState(userId, n)).Where(u => !unreadOnly || u.ReadAt is null).ToList();
+        IReadOnlyList<UserNotification> page = all.Skip((pageNumber - 1) * pageSize).Take(pageSize).ToList();
         return Task.FromResult((page, all.Count));
+    }
+
+    public Task<int> CountUnreadAsync(int userId, IReadOnlyCollection<string> moduleCodes, CancellationToken cancellationToken) =>
+        Task.FromResult(Visible(moduleCodes).Count(n => WithReadState(userId, n).ReadAt is null));
+
+    public Task<UserNotification?> GetVisibleAsync(int userId, int notificationId, IReadOnlyCollection<string> moduleCodes, CancellationToken cancellationToken) =>
+        Task.FromResult(Visible(moduleCodes).Where(n => n.NotificationId == notificationId).Select(n => WithReadState(userId, n)).FirstOrDefault());
+
+    public Task MarkReadAsync(int userId, int notificationId, DateTime readAt, CancellationToken cancellationToken)
+    {
+        if (!Reads.Any(r => r.UserId == userId && r.NotificationId == notificationId))
+        {
+            Reads.Add(new NotificationRead { UserId = userId, NotificationId = notificationId, ReadAt = readAt });
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<int> MarkAllReadAsync(int userId, IReadOnlyCollection<string> moduleCodes, DateTime readAt, CancellationToken cancellationToken)
+    {
+        var unread = Visible(moduleCodes).Where(n => WithReadState(userId, n).ReadAt is null).ToList();
+        Reads.AddRange(unread.Select(n => new NotificationRead { UserId = userId, NotificationId = n.NotificationId, ReadAt = readAt }));
+        return Task.FromResult(unread.Count);
     }
 }
 

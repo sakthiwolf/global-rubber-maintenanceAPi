@@ -29,6 +29,7 @@ public static class DependencyInjection
         services.AddScoped<IMoldPmService, MoldPmService>();
         services.AddScoped<IMoldPmEvaluator, MoldPmEvaluator>();
         services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<INotificationPublisher, NotificationPublisher>();
         services.AddScoped<ISparePartUsageService, SparePartUsageService>();
         services.AddScoped<IMachineBreakdownService, MachineBreakdownService>();
         services.AddScoped<IMachineReportService, MachineReportService>();

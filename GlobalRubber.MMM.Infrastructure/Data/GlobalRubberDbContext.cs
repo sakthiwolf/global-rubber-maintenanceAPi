@@ -35,6 +35,7 @@ public class GlobalRubberDbContext : DbContext
     public DbSet<MachinePmChecklistItem> MachinePmChecklistItems => Set<MachinePmChecklistItem>();
     public DbSet<MoldPm> MoldPms => Set<MoldPm>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<NotificationRead> NotificationReads => Set<NotificationRead>();
     public DbSet<SparePartUsage> SparePartUsages => Set<SparePartUsage>();
     public DbSet<SparePartStockTransaction> SparePartStockTransactions => Set<SparePartStockTransaction>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();

@@ -24,6 +24,8 @@ public class EndpointAuthorizationCoverageTests
     //   System.Ping ............. anonymous liveness probe
     //   Notification.GetMine .... any authenticated user reads THEIR notifications; the service filters them to the
     //                             modules the user's role can View (401 without a token)
+    //   Notification.GetMyUnreadCount / MarkAsRead / MarkAllAsRead ... the same self-service scope: the user id comes
+    //                             from the token, a notification outside the user's viewable modules is a 404 (migration 018)
     private static readonly HashSet<string> OpenEndpoints = new()
     {
         "AuthController.Login",
@@ -32,6 +34,9 @@ public class EndpointAuthorizationCoverageTests
         "AuthController.Logout",
         "SystemController.Ping",
         "NotificationController.GetMine",
+        "NotificationController.GetMyUnreadCount",
+        "NotificationController.MarkAsRead",
+        "NotificationController.MarkAllAsRead",
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Method, HttpMethodAttribute Http)> Endpoints() =>
