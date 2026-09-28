@@ -31,6 +31,13 @@ public class CreateMaintenanceChecklistRequest
     public DateOnly? StartDate { get; init; }
 
     /// <summary>
+    /// Optional (migration 017). Machine checklists: the maintenance type every PM occurrence of the checklist carries - it
+    /// must apply to Machine or Both, and a newly chosen type must be active. Mold checklists: must be empty (mold PMs have
+    /// no maintenance type).
+    /// </summary>
+    public int? MaintenanceTypeId { get; init; }
+
+    /// <summary>
     /// The items in the order they should appear; blank rows are dropped (analysis 4.10) and sort_order is assigned from
     /// the position of the remaining ones (1, 2, 3...), so the order cannot be inconsistent.
     /// </summary>

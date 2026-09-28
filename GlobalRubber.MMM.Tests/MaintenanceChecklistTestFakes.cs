@@ -113,7 +113,7 @@ internal sealed class InMemoryMaintenanceChecklistRepository : IMaintenanceCheck
     private MaintenanceChecklist Clone(MaintenanceChecklist c) => new()
     {
         ChecklistId = c.ChecklistId, ChecklistCode = c.ChecklistCode, ChecklistName = c.ChecklistName, AppliesTo = c.AppliesTo,
-        Frequency = c.Frequency, MachineId = c.MachineId, StartDate = c.StartDate,
+        Frequency = c.Frequency, MachineId = c.MachineId, StartDate = c.StartDate, MaintenanceTypeId = c.MaintenanceTypeId,
         Machine = c.MachineId is { } machineId ? _machines.Single(m => m.MachineId == machineId) : null,
         IsActive = c.IsActive, CreatedAt = c.CreatedAt, CreatedBy = c.CreatedBy, UpdatedAt = c.UpdatedAt, UpdatedBy = c.UpdatedBy,
         RowVersion = (byte[])c.RowVersion.Clone(),
@@ -305,12 +305,14 @@ internal sealed class InMemoryMaintenanceChecklistRepository : IMaintenanceCheck
         }
 
         // "Commit" - exactly the columns the real UpdateAsync writes - never the code, IsActive or the creation columns.
+        var previousTypeId = stored.MaintenanceTypeId;
         _nextItemId = itemId;
         stored.ChecklistName = checklist.ChecklistName;
         stored.AppliesTo = checklist.AppliesTo;
         stored.Frequency = checklist.Frequency;
         stored.MachineId = checklist.MachineId;
         stored.StartDate = checklist.StartDate;
+        stored.MaintenanceTypeId = checklist.MaintenanceTypeId;
         stored.UpdatedAt = checklist.UpdatedAt;
         stored.UpdatedBy = checklist.UpdatedBy;
         if (replaceItems)
@@ -351,6 +353,24 @@ internal sealed class InMemoryMaintenanceChecklistRepository : IMaintenanceCheck
             machine.NextMaintenanceDate = copy.NextMaintenanceDate;
             machine.UpdatedAt = copy.UpdatedAt;
             machine.UpdatedBy = copy.UpdatedBy;
+        }
+
+        // Migration 017, as the real repository does in the same transaction: open occurrences follow a CHANGED type (else
+        // only untyped ones receive it), completed ones only receive it when they have none (their updated_at is left alone).
+        var typeChanged = previousTypeId != checklist.MaintenanceTypeId;
+        foreach (var pm in Pms.Where(p => p.ChecklistId == checklist.ChecklistId))
+        {
+            if (pm.Status != MachinePmStatus.Completed && pm.MaintenanceTypeId != checklist.MaintenanceTypeId
+                && (typeChanged || pm.MaintenanceTypeId is null))
+            {
+                pm.MaintenanceTypeId = checklist.MaintenanceTypeId;
+                pm.UpdatedAt = checklist.UpdatedAt;
+                pm.UpdatedBy = checklist.UpdatedBy;
+            }
+            else if (pm.Status == MachinePmStatus.Completed && pm.MaintenanceTypeId is null && checklist.MaintenanceTypeId is not null)
+            {
+                pm.MaintenanceTypeId = checklist.MaintenanceTypeId;
+            }
         }
 
         stored.RowVersion = Next(stored.RowVersion);

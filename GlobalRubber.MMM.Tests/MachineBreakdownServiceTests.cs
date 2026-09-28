@@ -4,6 +4,7 @@ using GlobalRubber.MMM.Application.Interfaces;
 using GlobalRubber.MMM.Application.Interfaces.Repositories;
 using GlobalRubber.MMM.Application.Services;
 using GlobalRubber.MMM.Domain.Constants;
+using GlobalRubber.MMM.Domain.Entities;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GlobalRubber.MMM.Tests;
@@ -32,8 +33,11 @@ public class MachineBreakdownServiceTests
         var breakdownList = MachineBreakdownTestData.Breakdowns();
         var breakdowns = new InMemoryMachineBreakdownRepository(breakdownList, MachineTestData.Machines());
         var audit = new RecordingAuditLog();
+        var breakdownTypes = new InMemoryBreakdownTypeLookup(
+            new BreakdownType { BreakdownTypeId = 1, BreakdownTypeCode = "BT-0001", BreakdownTypeName = "Electrical", IsActive = true },
+            new BreakdownType { BreakdownTypeId = 2, BreakdownTypeCode = "BT-0002", BreakdownTypeName = "Retired", IsActive = false });
         var service = new MachineBreakdownService(
-            breakdowns, machines, users, new FixedClock(),
+            breakdowns, machines, breakdownTypes, users, new FixedClock(),
             auditOverride ?? audit, NullLogger<MachineBreakdownService>.Instance);
         return new Sut(service, breakdowns, audit);
     }
@@ -163,6 +167,32 @@ public class MachineBreakdownServiceTests
     {
         await Assert.ThrowsAsync<NotFoundException>(
             () => Create().Service.CreateAsync(Req(machineId: 9999), 1, null, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Create_WithActiveBreakdownType_StoresIt()
+    {
+        var sut = Create();
+        var dto = await sut.Service.CreateAsync(Req(breakdownTypeId: 1), 1, null, CancellationToken.None);
+        Assert.Equal(1, dto.BreakdownTypeId);
+    }
+
+    [Fact]
+    public async Task Create_UnknownBreakdownType_ThrowsNotFound()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(
+            () => Create().Service.CreateAsync(Req(breakdownTypeId: 9999), 1, null, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Create_InactiveBreakdownType_ThrowsValidation()
+    {
+        var sut = Create();
+        var before = (await sut.Service.GetAllAsync(new MachineBreakdownListQuery(), CancellationToken.None)).TotalCount;
+        var ex = await Assert.ThrowsAsync<ValidationException>(
+            () => sut.Service.CreateAsync(Req(breakdownTypeId: 2), 1, null, CancellationToken.None));
+        Assert.Contains(ex.Errors, e => e.Contains("breakdown type is not active"));
+        Assert.Equal(before, (await sut.Service.GetAllAsync(new MachineBreakdownListQuery(), CancellationToken.None)).TotalCount);
     }
 
     [Fact]

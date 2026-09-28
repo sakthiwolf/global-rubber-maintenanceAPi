@@ -31,9 +31,16 @@ public class MaintenanceChecklist : AuditableEntity
     /// <summary>The recurring cycle's anchor and the first occurrence's due date (plant date).</summary>
     public DateOnly? StartDate { get; set; }
 
+    /// <summary>
+    /// Migration 017: the optional maintenance type every PM occurrence of a Machine checklist carries (copied on creation,
+    /// kept in step on the open occurrences). Always null for Mold - mold PMs have no maintenance type.
+    /// </summary>
+    public int? MaintenanceTypeId { get; set; }
+
     public bool IsActive { get; set; } = true;
 
     public Machine? Machine { get; set; }
+    public MaintenanceType? MaintenanceType { get; set; }
     public List<MaintenanceChecklistItem> Items { get; set; } = new();
 
     /// <summary>The date every occurrence is computed from: StartDate, or the creation date (IST) on legacy rows without one.</summary>

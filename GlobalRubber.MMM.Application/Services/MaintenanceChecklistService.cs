@@ -50,6 +50,7 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
 
     private readonly IMaintenanceChecklistRepository _repository;
     private readonly IMachineRepository _machineRepository;
+    private readonly IMaintenanceTypeRepository _maintenanceTypeRepository;
     private readonly IUserRepository _userRepository;
     private readonly IDateTimeProvider _dateTimeProvider;
     private readonly IAuditLogService _auditLogService;
@@ -58,6 +59,7 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
     public MaintenanceChecklistService(
         IMaintenanceChecklistRepository repository,
         IMachineRepository machineRepository,
+        IMaintenanceTypeRepository maintenanceTypeRepository,
         IUserRepository userRepository,
         IDateTimeProvider dateTimeProvider,
         IAuditLogService auditLogService,
@@ -65,6 +67,7 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
     {
         _repository = repository;
         _machineRepository = machineRepository;
+        _maintenanceTypeRepository = maintenanceTypeRepository;
         _userRepository = userRepository;
         _dateTimeProvider = dateTimeProvider;
         _auditLogService = auditLogService;
@@ -98,6 +101,7 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
         await EnsureNameIsFreeAsync(name, excludeId: null, cancellationToken);
 
         var machine = await ResolveMachineAsync(machineId, currentMachineId: null, cancellationToken);
+        var maintenanceType = await ResolveMaintenanceTypeAsync(request.MaintenanceTypeId, currentTypeId: null, cancellationToken);
 
         var now = _dateTimeProvider.UtcNow;
         var checklist = new MaintenanceChecklist
@@ -109,6 +113,7 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
             Frequency = frequency,
             MachineId = machineId, // the navigation stays unset so the insert never touches the machine row
             StartDate = startDate,
+            MaintenanceTypeId = maintenanceType?.MaintenanceTypeId, // copied onto every PM occurrence (migration 017)
             IsActive = true, // a new checklist is always active - see CreateMaintenanceChecklistRequest
             CreatedAt = now,
             CreatedBy = actingUserId,
@@ -138,6 +143,7 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
 
         var created = await _repository.AddAsync(checklist, plan, cancellationToken);
         created.Machine = machine;
+        created.MaintenanceType = maintenanceType;
 
         await WriteAuditAsync(
             "ChecklistCreated", created, actingUserId, ipAddress,
@@ -170,6 +176,7 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
         await EnsureNameIsFreeAsync(name, checklistId, cancellationToken);
 
         var machine = await ResolveMachineAsync(machineId, checklist.MachineId, cancellationToken);
+        var maintenanceType = await ResolveMaintenanceTypeAsync(request.MaintenanceTypeId, checklist.MaintenanceTypeId, cancellationToken);
 
         var before = (AppliesTo: checklist.AppliesTo, Frequency: checklist.Frequency, MachineId: checklist.MachineId, StartDate: checklist.StartDate);
 
@@ -199,6 +206,11 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
             details.Add(new AuditLogDetailEntry("start_date", DateText(checklist.StartDate), DateText(startDate)));
         }
 
+        if (checklist.MaintenanceTypeId != maintenanceType?.MaintenanceTypeId)
+        {
+            details.Add(new AuditLogDetailEntry("maintenance_type", checklist.MaintenanceType?.MaintenanceTypeName, maintenanceType?.MaintenanceTypeName));
+        }
+
         // Items are rewritten only if the list (labels and order) actually changed, so an edit that only renames the
         // checklist keeps the item ids PM history points at. The audit records the item count, not the labels: the
         // joined labels could exceed audit_log_detail's 1000-character value columns.
@@ -215,7 +227,9 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
         checklist.Frequency = frequency;
         checklist.MachineId = machineId;
         checklist.StartDate = startDate;
+        checklist.MaintenanceTypeId = maintenanceType?.MaintenanceTypeId; // open PMs follow it, untyped completed ones get it
         checklist.Machine = null; // never attached by the update: only machine_id is written
+        checklist.MaintenanceType = null;
         checklist.UpdatedAt = now;
         checklist.UpdatedBy = actingUserId;
         if (itemsChanged)
@@ -228,6 +242,7 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
 
         var updated = await _repository.UpdateAsync(checklist, originalRowVersion!, itemsChanged, plan, cancellationToken);
         updated.Machine = machine;
+        updated.MaintenanceType = maintenanceType;
 
         // What happened to the open occurrence and the machines is part of the same audited change.
         details.AddRange(sync.Details());
@@ -480,6 +495,31 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
         return machine;
     }
 
+    // Migration 017. Unknown -> 404; the type must apply to Machine or Both (400 - only Machine PMs carry a type); a NEWLY
+    // chosen type must be active (400). An unchanged type deactivated since stays assigned, like the machine above.
+    private async Task<MaintenanceType?> ResolveMaintenanceTypeAsync(int? maintenanceTypeId, int? currentTypeId, CancellationToken cancellationToken)
+    {
+        if (maintenanceTypeId is not { } id)
+        {
+            return null;
+        }
+
+        var maintenanceType = await _maintenanceTypeRepository.GetByIdAsync(id, cancellationToken)
+            ?? throw new NotFoundException(nameof(MaintenanceType), id);
+
+        if (maintenanceType.AppliesTo is not (MaintenanceTypeAppliesTo.Machine or MaintenanceTypeAppliesTo.Both))
+        {
+            throw new ValidationException("The selected maintenance type does not apply to machines.");
+        }
+
+        if (!maintenanceType.IsActive && id != currentTypeId)
+        {
+            throw new ValidationException("The selected maintenance type is not active.");
+        }
+
+        return maintenanceType;
+    }
+
     private async Task EnsureNameIsFreeAsync(string name, int? excludeId, CancellationToken cancellationToken)
     {
         if (await _repository.ExistsActiveByNameAsync(name, excludeId, cancellationToken))
@@ -534,6 +574,16 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
         else if (appliesTo == MaintenanceChecklistAppliesTo.Machine && request.MachineId is null && isActive)
         {
             errors.Add("MachineId is required for a Machine checklist.");
+        }
+
+        // Migration 017: only Machine PMs have a maintenance type.
+        if (request.MaintenanceTypeId is <= 0)
+        {
+            errors.Add("MaintenanceTypeId is not valid.");
+        }
+        else if (appliesTo == MaintenanceChecklistAppliesTo.Mold && request.MaintenanceTypeId is not null)
+        {
+            errors.Add("A Mold checklist cannot have a maintenance type.");
         }
 
         // CK_maintenance_checklist_master_start_date: the anchor of an active Machine checklist's cycle.
@@ -634,6 +684,10 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
         MachineName = checklist.Machine?.MachineName,
         MachineIsActive = checklist.Machine?.IsActive,
         StartDate = checklist.StartDate,
+        MaintenanceTypeId = checklist.MaintenanceTypeId,
+        MaintenanceTypeCode = checklist.MaintenanceType?.MaintenanceTypeCode,
+        MaintenanceTypeName = checklist.MaintenanceType?.MaintenanceTypeName,
+        MaintenanceTypeIsActive = checklist.MaintenanceType?.IsActive,
         IsActive = checklist.IsActive,
         Items = checklist.Items
             .OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId)

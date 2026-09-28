@@ -25,7 +25,7 @@ public class MaintenanceChecklistServiceTests
         var machineList = MachineTestData.Machines();
         var checklists = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList);
         var audit = new RecordingAuditLog();
-        var service = new MaintenanceChecklistService(checklists, new InMemoryMachineRepository(machineList, departments, employees), users,
+        var service = new MaintenanceChecklistService(checklists, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()), users,
             new FixedClock(), auditOverride ?? audit, NullLogger<MaintenanceChecklistService>.Instance);
         return new Sut(service, checklists, audit, users);
     }

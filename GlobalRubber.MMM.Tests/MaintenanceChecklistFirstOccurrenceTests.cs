@@ -47,7 +47,7 @@ public class MaintenanceChecklistFirstOccurrenceTests
         var machineList = MachineTestData.Machines();
         var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList, LivePms());
         var audit = new RecordingAuditLog();
-        var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), users,
+        var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()), users,
             new FixedClock(), audit, NullLogger<MaintenanceChecklistService>.Instance);
         return new Sut(service, repo, audit);
     }
@@ -265,7 +265,7 @@ public class MaintenanceChecklistFirstOccurrenceTests
         var machineList = MachineTestData.Machines();
         var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList, LivePms());
         var failingAudit = new AuditLogService(new ThrowingAuditRepository(), new FixedClock(), NullLogger<AuditLogService>.Instance);
-        var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees),
+        var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()),
             new InMemoryUserRepository(UserTestData.Users(), roles.Find), new FixedClock(), failingAudit, NullLogger<MaintenanceChecklistService>.Instance);
 
         var dto = await service.CreateAsync(New(), 1, null, CancellationToken.None);

@@ -24,6 +24,14 @@ public sealed class MaintenanceChecklistDto
     /// <summary>The cycle anchor / first due date (yyyy-MM-dd); null only on inactive legacy checklists and optional for Mold.</summary>
     public DateOnly? StartDate { get; init; }
 
+    /// <summary>The maintenance type its PM occurrences carry (migration 017); null when none is set, always null for Mold.</summary>
+    public int? MaintenanceTypeId { get; init; }
+    public string? MaintenanceTypeCode { get; init; }
+    public string? MaintenanceTypeName { get; init; }
+
+    /// <summary>False when the chosen type has been deactivated since (the UI shows it as "(not active)").</summary>
+    public bool? MaintenanceTypeIsActive { get; init; }
+
     public bool IsActive { get; init; }
 
     /// <summary>The checklist's items in sort order (masters.maintenance_checklist_item_master).</summary>

@@ -35,6 +35,15 @@ public class MaintenanceChecklistConfiguration : IEntityTypeConfiguration<Mainte
             .OnDelete(DeleteBehavior.NoAction);
         builder.HasIndex(e => e.MachineId);
 
+        // Migration 017. FK_maintenance_checklist_master_maintenance_type (NO ACTION); IX_maintenance_checklist_master_maintenance_type.
+        builder.Property(e => e.MaintenanceTypeId).HasColumnName("maintenance_type_id");
+        builder.HasOne(e => e.MaintenanceType)
+            .WithMany()
+            .HasForeignKey(e => e.MaintenanceTypeId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.NoAction);
+        builder.HasIndex(e => e.MaintenanceTypeId);
+
         // UQ_maintenance_checklist_master_code
         builder.HasIndex(e => e.ChecklistCode).IsUnique();
 

@@ -66,6 +66,7 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
             .Skip((request.PageNumber - 1) * request.PageSize)
             .Take(request.PageSize)
             .Include(c => c.Machine)
+            .Include(c => c.MaintenanceType)
             .Include(c => c.Items.OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId))
             .ToListAsync(cancellationToken);
 
@@ -76,6 +77,7 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
         _dbContext.MaintenanceChecklists
             .AsNoTracking()
             .Include(c => c.Machine)
+            .Include(c => c.MaintenanceType)
             .Include(c => c.Items.OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId))
             .FirstOrDefaultAsync(c => c.ChecklistId == checklistId, cancellationToken);
 
@@ -93,6 +95,12 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
             .Where(m => m.IsActive)
             .OrderBy(m => m.MachineCode)
             .Select(m => new MaintenanceChecklistMachineLookupDto { MachineId = m.MachineId, MachineCode = m.MachineCode, MachineName = m.MachineName })
+            .ToListAsync(cancellationToken),
+        // Migration 017: only a Machine checklist carries a type, so only types that apply to Machine or Both are offered.
+        MaintenanceTypes = await _dbContext.MaintenanceTypes.AsNoTracking()
+            .Where(t => t.IsActive && (t.AppliesTo == MaintenanceTypeAppliesTo.Machine || t.AppliesTo == MaintenanceTypeAppliesTo.Both))
+            .OrderBy(t => t.MaintenanceTypeName).ThenBy(t => t.MaintenanceTypeId)
+            .Select(t => new MaintenanceChecklistTypeLookupDto { MaintenanceTypeId = t.MaintenanceTypeId, MaintenanceTypeCode = t.MaintenanceTypeCode, MaintenanceTypeName = t.MaintenanceTypeName })
             .ToListAsync(cancellationToken),
     };
 
@@ -246,9 +254,17 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
                 Frequency = checklist.Frequency,
                 MachineId = checklist.MachineId,
                 StartDate = checklist.StartDate,
+                MaintenanceTypeId = checklist.MaintenanceTypeId,
                 UpdatedAt = checklist.UpdatedAt,
                 UpdatedBy = checklist.UpdatedBy,
             };
+
+            // The type stored before this edit (migration 017). If another edit changed the row since the caller read it,
+            // the row-version check below refuses this one, so this is the value the caller's edit replaces.
+            var previousTypeId = await _dbContext.MaintenanceChecklists.AsNoTracking()
+                .Where(c => c.ChecklistId == checklist.ChecklistId)
+                .Select(c => c.MaintenanceTypeId)
+                .FirstOrDefaultAsync(cancellationToken);
 
             var entry = _dbContext.Attach(stub);
             entry.Property(c => c.ChecklistName).IsModified = true;
@@ -256,6 +272,7 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
             entry.Property(c => c.Frequency).IsModified = true;
             entry.Property(c => c.MachineId).IsModified = true;
             entry.Property(c => c.StartDate).IsModified = true;
+            entry.Property(c => c.MaintenanceTypeId).IsModified = true;
             entry.Property(c => c.UpdatedAt).IsModified = true;
             entry.Property(c => c.UpdatedBy).IsModified = true;
 
@@ -336,6 +353,8 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
                 await _dbContext.SaveChangesAsync(cancellationToken);
             }
 
+            await SyncOccurrenceMaintenanceTypeAsync(checklist, previousTypeId, cancellationToken);
+
             if (transaction is not null)
             {
                 await transaction.CommitAsync(cancellationToken);
@@ -383,6 +402,37 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
         checklist.RowVersion = stub.RowVersion;
         entry.State = EntityState.Detached;
         return checklist;
+    }
+
+    // Migration 017, inside the update's transaction. OPEN occurrences: when the checklist's type CHANGED they all follow it
+    // (also back to none); otherwise only those without a type receive it, so an unrelated edit never clears a type a
+    // legacy open PM already carries. COMPLETED occurrences only ever receive a type when they have none - a type already
+    // stored on history is never rewritten - and keep their updated_at/updated_by (their completion evidence).
+    private async Task SyncOccurrenceMaintenanceTypeAsync(MaintenanceChecklist checklist, int? previousTypeId, CancellationToken cancellationToken)
+    {
+        var typeId = checklist.MaintenanceTypeId;
+        var changed = typeId != previousTypeId;
+        if (!changed && typeId is null)
+        {
+            return;
+        }
+
+        await _dbContext.MachinePms
+            .Where(pm => pm.ChecklistId == checklist.ChecklistId && pm.Status != MachinePmStatus.Completed
+                         && (changed
+                             ? (typeId == null ? pm.MaintenanceTypeId != null : pm.MaintenanceTypeId == null || pm.MaintenanceTypeId != typeId)
+                             : pm.MaintenanceTypeId == null))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(pm => pm.MaintenanceTypeId, typeId)
+                .SetProperty(pm => pm.UpdatedAt, checklist.UpdatedAt)
+                .SetProperty(pm => pm.UpdatedBy, checklist.UpdatedBy), cancellationToken);
+
+        if (typeId is not null)
+        {
+            await _dbContext.MachinePms
+                .Where(pm => pm.ChecklistId == checklist.ChecklistId && pm.Status == MachinePmStatus.Completed && pm.MaintenanceTypeId == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(pm => pm.MaintenanceTypeId, typeId), cancellationToken);
+        }
     }
 
     private void Detach(MaintenanceChecklist checklist)

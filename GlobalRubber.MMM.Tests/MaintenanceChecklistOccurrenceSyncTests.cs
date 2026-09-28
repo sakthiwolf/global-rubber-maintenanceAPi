@@ -46,7 +46,7 @@ public class MaintenanceChecklistOccurrenceSyncTests
         var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList, pms);
         var audit = new RecordingAuditLog();
         var clock = new SettableClock();
-        var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), users, clock, audit, NullLogger<MaintenanceChecklistService>.Instance);
+        var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()), users, clock, audit, NullLogger<MaintenanceChecklistService>.Instance);
 
         var press = await service.CreateAsync(new CreateMaintenanceChecklistRequest
         {

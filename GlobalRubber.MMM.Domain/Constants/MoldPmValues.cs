@@ -12,6 +12,9 @@ public static class MoldPmStatus
 public static class MoldPmCategory
 {
     public const string ShotBased = "Shot-based";
+
+    /// <summary>Every value CK_mold_pm_transaction_category allows (database/scripts/008_create_constraints.sql).</summary>
+    public static readonly IReadOnlyList<string> All = new[] { "Scheduled", ShotBased, "Damage Repair", "Cleaning", "Inspection", "Preventive", "Replacement" };
 }
 
 /// <summary>

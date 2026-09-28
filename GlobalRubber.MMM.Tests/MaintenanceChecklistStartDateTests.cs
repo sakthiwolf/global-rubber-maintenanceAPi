@@ -34,7 +34,7 @@ public class MaintenanceChecklistStartDateTests
         var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList, pms);
         var audit = new RecordingAuditLog();
         var clock = new SettableClock(today ?? D(2026, 9, 25));
-        var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), users, clock, audit, NullLogger<MaintenanceChecklistService>.Instance);
+        var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()), users, clock, audit, NullLogger<MaintenanceChecklistService>.Instance);
         return new Sut(service, repo, audit, clock);
     }
 

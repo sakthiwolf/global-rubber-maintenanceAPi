@@ -31,6 +31,11 @@ public static class DependencyInjection
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<ISparePartUsageService, SparePartUsageService>();
         services.AddScoped<IMachineBreakdownService, MachineBreakdownService>();
+        services.AddScoped<IMachineReportService, MachineReportService>();
+        services.AddScoped<IMoldReportService, MoldReportService>();
+        services.AddScoped<IMaintenanceReportService, MaintenanceReportService>();
+        services.AddScoped<IBreakdownReportService, BreakdownReportService>();
+        services.AddScoped<ISparePartReportService, SparePartReportService>();
         services.AddScoped<ISparePartService, SparePartService>();
         services.AddScoped<IPermissionService, PermissionService>();
         services.AddScoped<IAuthService, AuthService>();

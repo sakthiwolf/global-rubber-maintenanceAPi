@@ -16,7 +16,7 @@ namespace GlobalRubber.MMM.Application.Services;
 ///  - BreakdownDate, BreakdownTime, MachineId and Problem are required.
 ///  - ReportedBy is free text (max 100 chars); NOT validated against Employee master.
 ///  - Priority must be Low / Medium / High / Critical; defaults to Medium when omitted.
-///  - BreakdownTypeId, if supplied, must reference an existing breakdown type.
+///  - BreakdownTypeId, if supplied, must reference an existing (404) and active (400) breakdown type.
 ///  - Initial Stage = Reported.
 ///  - Stage advances forward only: Reported → Assigned → Maintenance Started → Resolved → Closed.
 /// </summary>
@@ -29,6 +29,7 @@ public sealed class MachineBreakdownService : IMachineBreakdownService
 
     private readonly IMachineBreakdownRepository _repository;
     private readonly IMachineRepository _machineRepository;
+    private readonly IBreakdownTypeRepository _breakdownTypeRepository;
     private readonly IUserRepository _userRepository;
     private readonly IDateTimeProvider _dateTimeProvider;
     private readonly IAuditLogService _auditLogService;
@@ -37,6 +38,7 @@ public sealed class MachineBreakdownService : IMachineBreakdownService
     public MachineBreakdownService(
         IMachineBreakdownRepository repository,
         IMachineRepository machineRepository,
+        IBreakdownTypeRepository breakdownTypeRepository,
         IUserRepository userRepository,
         IDateTimeProvider dateTimeProvider,
         IAuditLogService auditLogService,
@@ -44,6 +46,7 @@ public sealed class MachineBreakdownService : IMachineBreakdownService
     {
         _repository = repository;
         _machineRepository = machineRepository;
+        _breakdownTypeRepository = breakdownTypeRepository;
         _userRepository = userRepository;
         _dateTimeProvider = dateTimeProvider;
         _auditLogService = auditLogService;
@@ -79,6 +82,18 @@ public sealed class MachineBreakdownService : IMachineBreakdownService
         if (!machine.IsActive)
         {
             throw new ValidationException("The selected machine is not active.");
+        }
+
+        // Breakdown type is optional; when chosen it must exist and be active.
+        if (input.BreakdownTypeId is { } breakdownTypeId)
+        {
+            var breakdownType = await _breakdownTypeRepository.GetByIdAsync(breakdownTypeId, cancellationToken)
+                ?? throw new NotFoundException(nameof(BreakdownType), breakdownTypeId);
+
+            if (!breakdownType.IsActive)
+            {
+                throw new ValidationException("The selected breakdown type is not active.");
+            }
         }
 
         var now = _dateTimeProvider.UtcNow;

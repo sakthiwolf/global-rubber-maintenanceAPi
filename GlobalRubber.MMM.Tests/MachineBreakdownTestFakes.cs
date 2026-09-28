@@ -167,3 +167,20 @@ internal sealed class InMemoryMachineBreakdownRepository : IMachineBreakdownRepo
         Machine = b.Machine,
     };
 }
+
+/// <summary>Read-only breakdown types for MachineBreakdownService (it only ever looks one up by id).</summary>
+public sealed class InMemoryBreakdownTypeLookup : IBreakdownTypeRepository
+{
+    private readonly List<BreakdownType> _types;
+
+    public InMemoryBreakdownTypeLookup(params BreakdownType[] types) => _types = types.ToList();
+
+    public Task<BreakdownType?> GetByIdAsync(int breakdownTypeId, CancellationToken cancellationToken) =>
+        Task.FromResult(_types.FirstOrDefault(t => t.BreakdownTypeId == breakdownTypeId));
+
+    public Task<(IReadOnlyList<BreakdownType> Items, int TotalCount)> GetAllAsync(BreakdownTypeListQuery request, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<bool> ExistsActiveByNameAsync(string name, int? excludeBreakdownTypeId, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<BreakdownType> AddAsync(BreakdownType breakdownType, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<BreakdownType> UpdateAsync(BreakdownType breakdownType, byte[] originalRowVersion, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<BreakdownType> DeactivateAsync(BreakdownType breakdownType, CancellationToken cancellationToken) => throw new NotSupportedException();
+}

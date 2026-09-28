@@ -90,6 +90,8 @@ public class EndpointAuthorizationCoverageTests
     public void EveryPermissionGatedEndpoint_UsesTheActionThatMatchesItsHttpVerb()
     {
         // GET -> View, POST -> Add, PUT/PATCH -> Edit, DELETE -> Delete (DELETE here means Deactivate).
+        // The one reviewed exception: a report download (GET .../export) is gated by Export - and Export is accepted on
+        // nothing but a GET whose route ends in "export".
         var mismatches = new List<string>();
         foreach (var e in Endpoints())
         {
@@ -109,7 +111,11 @@ public class EndpointAuthorizationCoverageTests
                 _ => throw new InvalidOperationException($"Unmapped verb {verb} on {Key(e)}"),
             };
 
-            if (permission.Action != expected)
+            var isExportDownload = verb == "GET"
+                && permission.Action == PermissionAction.Export
+                && (e.Http.Template ?? string.Empty).EndsWith("export", StringComparison.Ordinal);
+
+            if (permission.Action != expected && !isExportDownload)
             {
                 mismatches.Add($"{Key(e)}: {verb} requires {permission.Action}, expected {expected}");
             }

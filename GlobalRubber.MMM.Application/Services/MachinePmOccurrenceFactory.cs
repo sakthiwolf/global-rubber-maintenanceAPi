@@ -11,7 +11,8 @@ internal static class MachinePmOccurrenceFactory
 {
     /// <summary>
     /// A Scheduled occurrence of <paramref name="checklist"/> due on <paramref name="dueDate"/>, on the checklist's machine,
-    /// with a snapshot of the checklist's CURRENT items. No maintenance type, engineer or maintenance-by (approved Q4/Q5).
+    /// with a snapshot of the checklist's CURRENT items and the checklist's maintenance type (migration 017; null when the
+    /// checklist has none). No engineer or maintenance-by (approved Q4/Q5).
     /// The PM number is issued by the repository from the MACHINE_PM sequence.
     /// </summary>
     public static MachinePm NewOccurrence(MaintenanceChecklist checklist, DateOnly dueDate, DateTime now, int? actingUserId) => new()
@@ -20,7 +21,7 @@ internal static class MachinePmOccurrenceFactory
         ChecklistId = checklist.ChecklistId,
         ScheduledDate = dueDate,
         Status = MachinePmStatus.Scheduled,
-        MaintenanceTypeId = null,
+        MaintenanceTypeId = checklist.MaintenanceTypeId,
         EngineerId = null,
         MaintenanceBy = null,
         CreatedAt = now,

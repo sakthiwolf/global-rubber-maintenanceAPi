@@ -67,6 +67,11 @@ public static class DependencyInjection
         services.AddScoped<INotificationRepository, NotificationRepository>();
         services.AddScoped<ISparePartUsageRepository, SparePartUsageRepository>();
         services.AddScoped<IMachineBreakdownRepository, MachineBreakdownRepository>();
+        services.AddScoped<IMachineReportRepository, MachineReportRepository>();
+        services.AddScoped<IMoldReportRepository, MoldReportRepository>();
+        services.AddScoped<IMaintenanceReportRepository, MaintenanceReportRepository>();
+        services.AddScoped<IBreakdownReportRepository, BreakdownReportRepository>();
+        services.AddScoped<ISparePartReportRepository, SparePartReportRepository>();
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 
         services.AddOptions<JwtOptions>()
