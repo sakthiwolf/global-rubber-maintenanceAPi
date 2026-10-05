@@ -12,5 +12,8 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+
+        // The tests replace the repositories/services they call; no test host should reach for the database at start-up.
+        builder.UseSetting("Database:WarmUpOnStartup", "false");
     }
 }

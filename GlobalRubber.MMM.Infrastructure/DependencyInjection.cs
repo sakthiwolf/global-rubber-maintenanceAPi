@@ -88,6 +88,13 @@ public static class DependencyInjection
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
         services.AddSingleton<IRefreshTokenGenerator, RefreshTokenGenerator>();
 
+        // EF Core's one-time start-up cost is paid when the process starts, not by the first request (see the service).
+        // "Database:WarmUpOnStartup": false turns it off (the integration tests do, as they never use the database).
+        if (!string.IsNullOrWhiteSpace(connectionString) && configuration.GetValue("Database:WarmUpOnStartup", true))
+        {
+            services.AddHostedService<DatabaseWarmupService>();
+        }
+
         var healthChecksBuilder = services.AddHealthChecks();
 
         if (!string.IsNullOrWhiteSpace(connectionString))

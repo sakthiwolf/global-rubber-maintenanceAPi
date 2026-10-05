@@ -125,7 +125,7 @@ public static class BootstrapAdminCommandRunner
         }
 
         string userCode;
-        try
+        try 
         {
             userCode = await GenerateNextUserCodeAsync(dbContext);
         }
