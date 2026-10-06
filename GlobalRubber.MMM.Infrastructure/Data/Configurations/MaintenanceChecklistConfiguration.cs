@@ -44,6 +44,16 @@ public class MaintenanceChecklistConfiguration : IEntityTypeConfiguration<Mainte
             .OnDelete(DeleteBehavior.NoAction);
         builder.HasIndex(e => e.MaintenanceTypeId);
 
+        // Migration 020. FK_maintenance_checklist_master_source (self reference, NO ACTION); IX_maintenance_checklist_master_source.
+        // CK_maintenance_checklist_master_source: only a Machine plan references a checklist master, never itself.
+        builder.Property(e => e.SourceChecklistId).HasColumnName("source_checklist_id");
+        builder.HasOne(e => e.SourceChecklist)
+            .WithMany()
+            .HasForeignKey(e => e.SourceChecklistId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.NoAction);
+        builder.HasIndex(e => e.SourceChecklistId);
+
         // UQ_maintenance_checklist_master_code
         builder.HasIndex(e => e.ChecklistCode).IsUnique();
 

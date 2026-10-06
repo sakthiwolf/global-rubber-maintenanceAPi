@@ -5,12 +5,22 @@ namespace GlobalRubber.MMM.Application.Interfaces.Repositories;
 
 public interface IMaintenanceChecklistRepository
 {
-    /// <summary>A page of checklists (with their items, in sort order), name-ordered.</summary>
+    /// <summary>
+    /// A page of checklists (with their items, in sort order, and a plan's checklist master with ITS items), name-ordered:
+    /// the preventive maintenance plans, or - <paramref name="checklistMasters"/> - the reusable checklist masters
+    /// (migration 020: a row without a frequency).
+    /// </summary>
     Task<(IReadOnlyList<MaintenanceChecklist> Items, int TotalCount)> GetAllAsync(
-        MaintenanceChecklistListQuery request, CancellationToken cancellationToken);
+        MaintenanceChecklistListQuery request, bool checklistMasters, CancellationToken cancellationToken);
 
-    /// <summary>One checklist with its items in sort order, untracked; null if it does not exist.</summary>
+    /// <summary>One checklist with its items in sort order (and a plan's checklist master with its items), untracked; null if it does not exist.</summary>
     Task<MaintenanceChecklist?> GetByIdAsync(int checklistId, CancellationToken cancellationToken);
+
+    /// <summary>The ACTIVE checklist masters that apply to <paramref name="appliesTo"/>, with their items, by code.</summary>
+    Task<IReadOnlyList<MaintenanceChecklist>> GetActiveChecklistMastersAsync(string appliesTo, CancellationToken cancellationToken);
+
+    /// <summary>Whether any preventive maintenance plan (active or not) uses the checklist master.</summary>
+    Task<bool> IsChecklistMasterUsedAsync(int checklistMasterId, CancellationToken cancellationToken);
 
     Task<bool> ExistsActiveByNameAsync(string name, int? excludeChecklistId, CancellationToken cancellationToken);
 
@@ -28,7 +38,7 @@ public interface IMaintenanceChecklistRepository
     Task<MaintenanceChecklist> AddAsync(MaintenanceChecklist checklist, MachinePmOccurrencePlan? firstOccurrence, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Writes name / applies-to / frequency / machine / updated columns guarded by <paramref name="originalRowVersion"/> and, when
+    /// Writes name / applies-to / frequency / machine / start date / type / checklist master / updated columns guarded by <paramref name="originalRowVersion"/> and, when
     /// <paramref name="replaceItems"/> is true, replaces the item rows with <c>checklist.Items</c> - all in one transaction.
     /// When <paramref name="occurrenceSync"/> is given, the same transaction also applies it: the affected machine rows are
     /// locked first (ascending id), then after the header/items the plan decides what happens to the checklist's open

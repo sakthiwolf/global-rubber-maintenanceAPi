@@ -39,6 +39,8 @@ public class MachineBreakdownConfiguration : IEntityTypeConfiguration<MachineBre
             .HasDefaultValue(BreakdownStage.Reported);
 
         builder.Property(b => b.AssignedEngineerId).HasColumnName("assigned_engineer_id");
+        // Migration 021. CK_machine_breakdown_transaction_assignee: never both an employee and a typed name.
+        builder.Property(b => b.AssignedToName).HasColumnName("assigned_to_name").HasMaxLength(100);
         builder.Property(b => b.AssignedAt).HasColumnName("assigned_at").HasColumnType("datetime2(0)");
         builder.Property(b => b.MaintenanceStartedAt).HasColumnName("maintenance_started_at").HasColumnType("datetime2(0)");
         builder.Property(b => b.ResolvedAt).HasColumnName("resolved_at").HasColumnType("datetime2(0)");

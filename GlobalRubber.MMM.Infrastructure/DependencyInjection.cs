@@ -63,6 +63,7 @@ public static class DependencyInjection
         services.AddScoped<IMaintenanceChecklistRepository, MaintenanceChecklistRepository>();
         services.AddScoped<IProductionEntryRepository, ProductionEntryRepository>();
         services.AddScoped<IMachinePmRepository, MachinePmRepository>();
+        services.AddScoped<IMachinePmNotificationQuery, MachinePmRepository>();
         services.AddScoped<IMoldPmRepository, MoldPmRepository>();
         services.AddScoped<INotificationRepository, NotificationRepository>();
         services.AddScoped<ISparePartUsageRepository, SparePartUsageRepository>();

@@ -63,7 +63,7 @@ public static class MachineReportQueryBuilder
                 m.MachineName.ToLower().Contains(search) ||
                 m.MachineType.ToLower().Contains(search) ||
                 m.Location.ToLower().Contains(search) ||
-                m.Department.DepartmentName.ToLower().Contains(search));
+                (m.Department != null && m.Department.DepartmentName.ToLower().Contains(search)));
         }
 
         return source;
@@ -79,7 +79,7 @@ public static class MachineReportQueryBuilder
         MachineCode = m.MachineCode,
         MachineName = m.MachineName,
         MachineType = m.MachineType,
-        DepartmentName = m.Department.DepartmentName,
+        DepartmentName = m.Department != null ? m.Department.DepartmentName : string.Empty, // migration 023: optional
         Location = m.Location,
         Criticality = m.Criticality,
         OperationalStatus = m.OperationalStatus,
@@ -265,7 +265,7 @@ public static class MachineReportQueryBuilder
         BreakdownNo = b.BreakdownNo,
         MachineCode = b.Machine.MachineCode,
         MachineName = b.Machine.MachineName,
-        DepartmentName = b.Machine.Department.DepartmentName,
+        DepartmentName = b.Machine.Department != null ? b.Machine.Department.DepartmentName : string.Empty,
         BreakdownDate = b.BreakdownDate,
         BreakdownTime = b.BreakdownTime,
         Problem = b.Problem,

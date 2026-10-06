@@ -25,8 +25,8 @@ public static class BreakdownReportQueryBuilder
         }),
         BreakdownReportGroupBy.Department => filtered.Select(b => new BreakdownGroupSource
         {
-            Code = b.Machine.Department.DepartmentCode,
-            Name = b.Machine.Department.DepartmentName,
+            Code = b.Machine.Department != null ? b.Machine.Department.DepartmentCode : null, // no department -> "Unspecified"
+            Name = b.Machine.Department != null ? b.Machine.Department.DepartmentName : null,
             Resolved = b.Stage == BreakdownStage.Resolved || b.Stage == BreakdownStage.Closed,
             Downtime = b.Stage == BreakdownStage.Resolved || b.Stage == BreakdownStage.Closed ? b.DowntimeHours : null,
         }),

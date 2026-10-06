@@ -34,6 +34,9 @@ public class MoldPmConfiguration : IEntityTypeConfiguration<MoldPm>
         builder.Property(e => e.Remarks).HasColumnName("remarks").HasMaxLength(1000);
         // CK_mold_pm_transaction_status: Scheduled / In Progress / Completed.
         builder.Property(e => e.Status).HasColumnName("status").HasMaxLength(15).IsUnicode(false).IsRequired();
+        // Migration 025: CK_mold_pm_transaction_schedule_type (Automatic / Manual; Manual => title, no plan, not Shot-based).
+        builder.Property(e => e.ScheduleType).HasColumnName("schedule_type").HasMaxLength(10).IsUnicode(false).IsRequired();
+        builder.Property(e => e.Title).HasColumnName("title").HasMaxLength(150);
 
         builder.HasIndex(e => e.PmNo).IsUnique();
         // UX_mold_pm_transaction_open_shot_based (migration 014): at most one open automatic PM per mold.
@@ -47,6 +50,9 @@ public class MoldPmConfiguration : IEntityTypeConfiguration<MoldPm>
 
         // FK_mold_pm_transaction_mold (NO ACTION).
         builder.HasOne(e => e.Mold).WithMany().HasForeignKey(e => e.MoldId).OnDelete(DeleteBehavior.NoAction);
+
+        // FK_mold_pm_checklist_transaction_pm (the header is never deleted by the API) - manual mold PMs (migration 025).
+        builder.HasMany(e => e.ChecklistItems).WithOne().HasForeignKey(i => i.MoldPmId).OnDelete(DeleteBehavior.Cascade);
 
         builder.ConfigureAuditColumns();
     }

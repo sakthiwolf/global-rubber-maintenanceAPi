@@ -38,4 +38,14 @@ public interface IMachineBreakdownService
     Task<MachineBreakdownDto> AdvanceStageAsync(
         int machineBreakdownId, AdvanceMachineBreakdownStageRequest request,
         int? actingUserId, string? ipAddress, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reopens a Closed breakdown: back to Resolved, ClosedAt cleared, everything else kept. Uses optimistic concurrency.
+    /// </summary>
+    /// <exception cref="NotFoundException">No breakdown exists with the given id.</exception>
+    /// <exception cref="ConflictException">The breakdown is not Closed, or it was modified concurrently.</exception>
+    /// <exception cref="ValidationException">RowVersion missing or invalid.</exception>
+    Task<MachineBreakdownDto> ReopenAsync(
+        int machineBreakdownId, ReopenMachineBreakdownRequest request,
+        int? actingUserId, string? ipAddress, CancellationToken cancellationToken);
 }

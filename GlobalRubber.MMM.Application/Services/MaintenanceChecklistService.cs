@@ -37,6 +37,15 @@ namespace GlobalRubber.MMM.Application.Services;
 /// Mold -&gt; Machine reuses such a kept occurrence (moved to the selected machine, re-dated, snapshot refreshed) or, if
 /// there is none, creates a first occurrence. Every affected machine's next date is recalculated. An inactive checklist's
 /// edits never touch its open occurrence; deactivation leaves it open and completable.
+///
+/// Checklist Masters (migration 020, approved 2026-10-05): the same table also holds reusable CHECKLIST MASTERS - name,
+/// applies-to and items, no plan configuration (no frequency). A Machine plan selects one (SourceChecklistId) instead of
+/// entering items: it has no items of its own and its PM occurrences copy the master's CURRENT items. The selected master
+/// must exist, be a checklist master, apply to Machine, have at least one item and - when newly chosen - be active.
+/// Plans created before migration 020 keep their own items until a master is chosen (no automatic conversion); Mold plans
+/// never use a master. Choosing another master refreshes the open occurrence's snapshot like an item change; editing a
+/// master's items affects only occurrences generated afterwards. A plan always keeps its frequency (a row without one IS a
+/// checklist master), so plan and master can never be confused.
 /// </summary>
 public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
 {
@@ -47,6 +56,8 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
     private const int NameMaxLength = 150;                           // checklist_name NVARCHAR(150)
     private const int ItemLabelMaxLength = 200;                      // item_label NVARCHAR(200)
     private const string AtLeastOneItemMessage = "Please add at least one checklist item."; // analysis 4.10 / validation table
+    private const string NotAPlanMessage = "This is a Checklist Master, not a preventive maintenance plan. Edit it from Checklist Masters.";
+    private const string NotAMasterMessage = "This is a preventive maintenance plan, not a Checklist Master. Edit it from Preventive Maintenance Plans.";
 
     private readonly IMaintenanceChecklistRepository _repository;
     private readonly IMachineRepository _machineRepository;
@@ -54,6 +65,7 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
     private readonly IUserRepository _userRepository;
     private readonly IDateTimeProvider _dateTimeProvider;
     private readonly IAuditLogService _auditLogService;
+    private readonly INotificationPublisher _notificationPublisher;
     private readonly ILogger<MaintenanceChecklistService> _logger;
 
     public MaintenanceChecklistService(
@@ -63,6 +75,7 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
         IUserRepository userRepository,
         IDateTimeProvider dateTimeProvider,
         IAuditLogService auditLogService,
+        INotificationPublisher notificationPublisher,
         ILogger<MaintenanceChecklistService> logger)
     {
         _repository = repository;
@@ -71,14 +84,40 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
         _userRepository = userRepository;
         _dateTimeProvider = dateTimeProvider;
         _auditLogService = auditLogService;
+        _notificationPublisher = notificationPublisher;
         _logger = logger;
     }
 
     public async Task<PagedResult<MaintenanceChecklistDto>> GetAllAsync(MaintenanceChecklistListQuery query, CancellationToken cancellationToken)
     {
-        var (items, totalCount) = await _repository.GetAllAsync(query, cancellationToken);
+        var (items, totalCount) = await _repository.GetAllAsync(query, checklistMasters: false, cancellationToken);
 
         return PagedResult<MaintenanceChecklistDto>.Create(items.Select(MapToDto).ToList(), query.PageNumber, query.PageSize, totalCount);
+    }
+
+    public async Task<PagedResult<MaintenanceChecklistDto>> GetChecklistMastersAsync(MaintenanceChecklistListQuery query, CancellationToken cancellationToken)
+    {
+        var (items, totalCount) = await _repository.GetAllAsync(query, checklistMasters: true, cancellationToken);
+
+        return PagedResult<MaintenanceChecklistDto>.Create(items.Select(MapToDto).ToList(), query.PageNumber, query.PageSize, totalCount);
+    }
+
+    public async Task<IReadOnlyList<ChecklistMasterOptionDto>> GetChecklistMasterOptionsAsync(string? appliesTo, CancellationToken cancellationToken)
+    {
+        var input = string.IsNullOrWhiteSpace(appliesTo) ? MaintenanceChecklistAppliesTo.Machine : appliesTo.Trim();
+        var normalized = MaintenanceChecklistAppliesTo.All.FirstOrDefault(a => string.Equals(a, input, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ValidationException($"AppliesTo must be one of: {string.Join(", ", MaintenanceChecklistAppliesTo.All)}.");
+
+        var masters = await _repository.GetActiveChecklistMastersAsync(normalized, cancellationToken);
+
+        return masters.Select(m => new ChecklistMasterOptionDto
+        {
+            ChecklistId = m.ChecklistId,
+            ChecklistCode = m.ChecklistCode,
+            ChecklistName = m.ChecklistName,
+            AppliesTo = m.AppliesTo,
+            Items = MapItems(m.Items),
+        }).ToList();
     }
 
     public async Task<MaintenanceChecklistDto> GetByIdAsync(int checklistId, CancellationToken cancellationToken)
@@ -95,13 +134,16 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
     public async Task<MaintenanceChecklistDto> CreateAsync(
         CreateMaintenanceChecklistRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken)
     {
-        // A new checklist is always active, so its recurring configuration is always required.
-        var (name, appliesTo, frequency, machineId, startDate, labels) = NormalizeAndValidate(request, isActive: true, rowVersion: null, requireRowVersion: false, out _);
+        // A new checklist is always active, so its recurring configuration is always required - and a new Machine plan
+        // always uses a Checklist Master (migration 020).
+        var (name, appliesTo, frequency, machineId, startDate, sourceId, labels) = NormalizeAndValidate(
+            request, isActive: true, ownItemsAllowedForMachine: false, rowVersion: null, requireRowVersion: false, out _);
 
         await EnsureNameIsFreeAsync(name, excludeId: null, cancellationToken);
 
         var machine = await ResolveMachineAsync(machineId, currentMachineId: null, cancellationToken);
         var maintenanceType = await ResolveMaintenanceTypeAsync(request.MaintenanceTypeId, currentTypeId: null, cancellationToken);
+        var source = await ResolveChecklistMasterAsync(sourceId, currentSourceId: null, appliesTo, cancellationToken);
 
         var now = _dateTimeProvider.UtcNow;
         var checklist = new MaintenanceChecklist
@@ -114,10 +156,11 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
             MachineId = machineId, // the navigation stays unset so the insert never touches the machine row
             StartDate = startDate,
             MaintenanceTypeId = maintenanceType?.MaintenanceTypeId, // copied onto every PM occurrence (migration 017)
+            SourceChecklistId = source?.ChecklistId, // the navigation stays unset so the insert never touches the master row
             IsActive = true, // a new checklist is always active - see CreateMaintenanceChecklistRequest
             CreatedAt = now,
             CreatedBy = actingUserId,
-            Items = BuildItems(labels, now, actingUserId),
+            Items = source is null ? BuildItems(labels, now, actingUserId) : new List<MaintenanceChecklistItem>(), // never a copy of the master's
         };
 
         // Filled in by the plan inside the transaction; read only after it has committed.
@@ -129,7 +172,8 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
             ? new MachinePmOccurrencePlan
             {
                 // The first occurrence is due ON the start date (even one in the past: it is then simply overdue).
-                BuildOccurrence = saved => firstOccurrence = MachinePmOccurrenceFactory.NewOccurrence(saved, saved.StartDate!.Value, now, actingUserId),
+                BuildOccurrence = saved => firstOccurrence = MachinePmOccurrenceFactory.NewOccurrence(
+                    saved, source?.Items ?? saved.Items, saved.StartDate!.Value, now, actingUserId),
                 ApplyToLockedMachine = (lockedMachine, openDueDates) =>
                 {
                     machineNextBefore = lockedMachine.NextMaintenanceDate;
@@ -144,13 +188,16 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
         var created = await _repository.AddAsync(checklist, plan, cancellationToken);
         created.Machine = machine;
         created.MaintenanceType = maintenanceType;
+        created.SourceChecklist = source;
 
         await WriteAuditAsync(
             "ChecklistCreated", created, actingUserId, ipAddress,
             actor => $"{actor} created {created.Frequency?.ToLowerInvariant()} checklist '{created.ChecklistName}' ({created.ChecklistCode}) for " +
                      (machine is null ? created.AppliesTo : $"machine {machine.MachineCode}") +
                      (created.StartDate is { } start ? $" starting {start.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}" : string.Empty) +
-                     $" with {Pluralize(created.Items.Count)}.",
+                     (source is null
+                         ? $" with {Pluralize(created.Items.Count)}."
+                         : $" using checklist master {source.ChecklistCode} ({Pluralize(source.Items.Count)})."),
             details: null, cancellationToken);
 
         if (firstOccurrence is not null)
@@ -168,15 +215,24 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
         var checklist = await _repository.GetByIdAsync(checklistId, cancellationToken)
             ?? throw new NotFoundException(nameof(MaintenanceChecklist), checklistId);
 
+        if (checklist.IsChecklistMaster)
+        {
+            throw new ValidationException(NotAPlanMessage);
+        }
+
         // The active-checklist requirements follow the checklist's stored status: an inactive legacy checklist may keep an
-        // incomplete configuration (CK_maintenance_checklist_master_active_config).
-        var (name, appliesTo, frequency, machineId, startDate, labels) = NormalizeAndValidate(
-            request, checklist.IsActive, request.RowVersion, requireRowVersion: true, out var originalRowVersion);
+        // incomplete machine / start date (CK_maintenance_checklist_master_active_config). A Machine plan created before
+        // migration 020 may keep its own items until a Checklist Master is chosen (no automatic conversion).
+        var keepsOwnItems = checklist.AppliesTo == MaintenanceChecklistAppliesTo.Machine && checklist.SourceChecklistId is null;
+        var (name, appliesTo, frequency, machineId, startDate, sourceId, labels) = NormalizeAndValidate(
+            request, checklist.IsActive, ownItemsAllowedForMachine: keepsOwnItems, request.RowVersion, requireRowVersion: true, out var originalRowVersion);
 
         await EnsureNameIsFreeAsync(name, checklistId, cancellationToken);
 
         var machine = await ResolveMachineAsync(machineId, checklist.MachineId, cancellationToken);
         var maintenanceType = await ResolveMaintenanceTypeAsync(request.MaintenanceTypeId, checklist.MaintenanceTypeId, cancellationToken);
+        var source = await ResolveChecklistMasterAsync(sourceId, checklist.SourceChecklistId, appliesTo, cancellationToken);
+        var sourceChanged = checklist.SourceChecklistId != source?.ChecklistId;
 
         var before = (AppliesTo: checklist.AppliesTo, Frequency: checklist.Frequency, MachineId: checklist.MachineId, StartDate: checklist.StartDate);
 
@@ -211,9 +267,16 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
             details.Add(new AuditLogDetailEntry("maintenance_type", checklist.MaintenanceType?.MaintenanceTypeName, maintenanceType?.MaintenanceTypeName));
         }
 
+        if (sourceChanged)
+        {
+            details.Add(new AuditLogDetailEntry("checklist_master", checklist.SourceChecklist?.ChecklistCode, source?.ChecklistCode));
+        }
+
         // Items are rewritten only if the list (labels and order) actually changed, so an edit that only renames the
         // checklist keeps the item ids PM history points at. The audit records the item count, not the labels: the
         // joined labels could exceed audit_log_detail's 1000-character value columns.
+        // With a Checklist Master the plan keeps NO items of its own (an older plan's own items are removed when one is
+        // chosen), so the master's items are never duplicated onto the plan.
         var currentLabels = checklist.Items.OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId).Select(i => i.ItemLabel).ToList();
         var itemsChanged = !currentLabels.SequenceEqual(labels, StringComparer.Ordinal);
         if (itemsChanged)
@@ -228,8 +291,10 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
         checklist.MachineId = machineId;
         checklist.StartDate = startDate;
         checklist.MaintenanceTypeId = maintenanceType?.MaintenanceTypeId; // open PMs follow it, untyped completed ones get it
+        checklist.SourceChecklistId = source?.ChecklistId;
         checklist.Machine = null; // never attached by the update: only machine_id is written
         checklist.MaintenanceType = null;
+        checklist.SourceChecklist = null; // only source_checklist_id is written - the master row is never touched
         checklist.UpdatedAt = now;
         checklist.UpdatedBy = actingUserId;
         if (itemsChanged)
@@ -237,12 +302,15 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
             checklist.Items = BuildItems(labels, now, actingUserId);
         }
 
+        // The open occurrence's snapshot follows the plan's EFFECTIVE items: a different master counts as an item change.
         var sync = new OccurrenceSyncResult();
-        var plan = BuildOccurrenceSyncPlan(checklist, before, itemsChanged, now, actingUserId, sync);
+        var plan = BuildOccurrenceSyncPlan(
+            checklist, before, itemsChanged || sourceChanged, () => source?.Items ?? checklist.Items, now, actingUserId, sync);
 
         var updated = await _repository.UpdateAsync(checklist, originalRowVersion!, itemsChanged, plan, cancellationToken);
         updated.Machine = machine;
         updated.MaintenanceType = maintenanceType;
+        updated.SourceChecklist = source;
 
         // What happened to the open occurrence and the machines is part of the same audited change.
         details.AddRange(sync.Details());
@@ -286,28 +354,175 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
 
         await WriteAuditAsync(
             "ChecklistDeactivated", deactivated, actingUserId, ipAddress,
-            actor => $"{actor} deactivated checklist '{deactivated.ChecklistName}' ({deactivated.ChecklistCode}).",
+            actor => $"{actor} deactivated {(deactivated.IsChecklistMaster ? "checklist master" : "checklist")} '{deactivated.ChecklistName}' ({deactivated.ChecklistCode}).",
             new[] { new AuditLogDetailEntry("is_active", "True", "False") }, cancellationToken);
 
         return MapToDto(deactivated);
     }
 
+    public async Task<MaintenanceChecklistDto> CreateChecklistMasterAsync(
+        CreateChecklistMasterRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken)
+    {
+        var (name, appliesTo, labels) = NormalizeAndValidateMaster(request, rowVersion: null, requireRowVersion: false, out _);
+
+        await EnsureNameIsFreeAsync(name, excludeId: null, cancellationToken);
+
+        var now = _dateTimeProvider.UtcNow;
+        var master = new MaintenanceChecklist
+        {
+            // No plan configuration at all - that is what makes the row a checklist master (migration 020).
+            ChecklistName = name,
+            AppliesTo = appliesTo,
+            IsActive = true,
+            CreatedAt = now,
+            CreatedBy = actingUserId,
+            Items = BuildItems(labels, now, actingUserId),
+        };
+
+        var created = await _repository.AddAsync(master, firstOccurrence: null, cancellationToken); // a master never schedules a PM
+
+        await WriteAuditAsync(
+            "ChecklistCreated", created, actingUserId, ipAddress,
+            actor => $"{actor} created checklist master '{created.ChecklistName}' ({created.ChecklistCode}) for {created.AppliesTo} with {Pluralize(created.Items.Count)}.",
+            details: null, cancellationToken);
+
+        return MapToDto(created);
+    }
+
+    public async Task<MaintenanceChecklistDto> UpdateChecklistMasterAsync(
+        int checklistId, UpdateChecklistMasterRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken)
+    {
+        var master = await _repository.GetByIdAsync(checklistId, cancellationToken)
+            ?? throw new NotFoundException(nameof(MaintenanceChecklist), checklistId);
+
+        if (!master.IsChecklistMaster)
+        {
+            throw new ValidationException(NotAMasterMessage);
+        }
+
+        var (name, appliesTo, labels) = NormalizeAndValidateMaster(request, request.RowVersion, requireRowVersion: true, out var originalRowVersion);
+
+        await EnsureNameIsFreeAsync(name, checklistId, cancellationToken);
+
+        var details = new List<AuditLogDetailEntry>();
+        if (!string.Equals(master.ChecklistName, name, StringComparison.Ordinal))
+        {
+            details.Add(new AuditLogDetailEntry("checklist_name", master.ChecklistName, name));
+        }
+
+        if (!string.Equals(master.AppliesTo, appliesTo, StringComparison.Ordinal))
+        {
+            // The plans that use it are Machine plans: a master they use must keep applying to Machine.
+            if (await _repository.IsChecklistMasterUsedAsync(checklistId, cancellationToken))
+            {
+                throw new ConflictException("The Checklist Master is used by preventive maintenance plans, so its Applies To cannot be changed.");
+            }
+
+            details.Add(new AuditLogDetailEntry("applies_to", master.AppliesTo, appliesTo));
+        }
+
+        // Replaced as a set only when labels/order changed (keeps the item ids PM snapshots point at). The plans that use the
+        // master copy the new items into the PM occurrences generated from now on; existing PMs keep their snapshot.
+        var currentLabels = master.Items.OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId).Select(i => i.ItemLabel).ToList();
+        var itemsChanged = !currentLabels.SequenceEqual(labels, StringComparer.Ordinal);
+        if (itemsChanged)
+        {
+            details.Add(new AuditLogDetailEntry("items", Pluralize(currentLabels.Count), Pluralize(labels.Count)));
+        }
+
+        var now = _dateTimeProvider.UtcNow;
+        master.ChecklistName = name;
+        master.AppliesTo = appliesTo;
+        master.UpdatedAt = now;
+        master.UpdatedBy = actingUserId;
+        if (itemsChanged)
+        {
+            master.Items = BuildItems(labels, now, actingUserId);
+        }
+
+        var updated = await _repository.UpdateAsync(master, originalRowVersion!, itemsChanged, occurrenceSync: null, cancellationToken);
+
+        var changeSummary = details.Count > 0 ? $"Changed: {string.Join(", ", details.Select(d => d.FieldName))}." : "No field values changed.";
+        await WriteAuditAsync(
+            "ChecklistUpdated", updated, actingUserId, ipAddress,
+            actor => $"{actor} updated checklist master '{updated.ChecklistName}' ({updated.ChecklistCode}). {changeSummary}",
+            details, cancellationToken);
+
+        return MapToDto(updated);
+    }
+
+    // Migration 020. Unknown -> 404; not a checklist master, another asset type or no items -> 400; a NEWLY chosen master must
+    // be active (400). An unchanged master deactivated since stays assigned - the project's convention for references.
+    private async Task<MaintenanceChecklist?> ResolveChecklistMasterAsync(int? sourceId, int? currentSourceId, string appliesTo, CancellationToken cancellationToken)
+    {
+        if (sourceId is not { } id)
+        {
+            return null;
+        }
+
+        var master = await _repository.GetByIdAsync(id, cancellationToken)
+            ?? throw new NotFoundException("Checklist Master", id);
+
+        if (!master.IsChecklistMaster)
+        {
+            throw new ValidationException("The selected checklist is not a Checklist Master.");
+        }
+
+        if (!string.Equals(master.AppliesTo, appliesTo, StringComparison.Ordinal))
+        {
+            throw new ValidationException($"The selected Checklist Master does not apply to {appliesTo}.");
+        }
+
+        if (!master.IsActive && id != currentSourceId)
+        {
+            throw new ValidationException("The selected Checklist Master is not active.");
+        }
+
+        if (master.Items.Count == 0)
+        {
+            throw new ValidationException("The selected Checklist Master has no checklist items.");
+        }
+
+        return master;
+    }
+
+    private static (string Name, string AppliesTo, IReadOnlyList<string> Labels) NormalizeAndValidateMaster(
+        CreateChecklistMasterRequest request, string? rowVersion, bool requireRowVersion, out byte[]? originalRowVersion)
+    {
+        var (name, _, appliesTo, labels, errors) = NormalizeCommon(request.ChecklistName, request.AppliesTo, request.Items);
+        ValidateLabels(labels, errors);
+
+        originalRowVersion = null;
+        if (requireRowVersion)
+        {
+            if (string.IsNullOrWhiteSpace(rowVersion)) errors.Add("RowVersion is required.");
+            else if (!TryDecodeRowVersion(rowVersion, out originalRowVersion)) errors.Add("RowVersion is not valid.");
+        }
+
+        if (errors.Count > 0)
+        {
+            throw new ValidationException(errors);
+        }
+
+        return (name, appliesTo!, labels);
+    }
+
     // The first occurrence of an EXISTING checklist that becomes a Machine checklist (Mold -> Machine): the first cycle date
     // of its start date on or after today (plant date) - never a backlog of past cycle dates.
-    private MachinePm BuildFirstOccurrence(MaintenanceChecklist saved, DateTime now, int? actingUserId)
+    private MachinePm BuildFirstOccurrence(MaintenanceChecklist saved, IEnumerable<MaintenanceChecklistItem> items, DateTime now, int? actingUserId)
     {
         var dueDate = RecurrenceRules.FirstOnOrAfter(saved.CycleAnchor(), saved.Frequency!, _dateTimeProvider.Today);
 
-        return MachinePmOccurrenceFactory.NewOccurrence(saved, dueDate, now, actingUserId);
+        return MachinePmOccurrenceFactory.NewOccurrence(saved, items, dueDate, now, actingUserId);
     }
-
-    private static List<MachinePmChecklistItem> Snapshot(MaintenanceChecklist saved) => MachinePmOccurrenceFactory.Snapshot(saved);
 
     // Function 4: what an edit of an ACTIVE checklist does to its open occurrence and the machines involved. Null when
     // nothing about the occurrence can change (an inactive checklist, a Mold-only edit, or only the name changed).
+    // effectiveItems: the plan's items once saved - its checklist master's, or its own (read inside the transaction, after
+    // own items were rewritten, so the snapshot carries their new ids).
     private ChecklistOccurrenceSyncPlan? BuildOccurrenceSyncPlan(
         MaintenanceChecklist saved, (string AppliesTo, string? Frequency, int? MachineId, DateOnly? StartDate) before, bool itemsChanged,
-        DateTime now, int? actingUserId, OccurrenceSyncResult result)
+        Func<IEnumerable<MaintenanceChecklistItem>> effectiveItems, DateTime now, int? actingUserId, OccurrenceSyncResult result)
     {
         var appliesToChanged = before.AppliesTo != saved.AppliesTo;
         var frequencyChanged = before.Frequency != saved.Frequency;
@@ -343,7 +558,7 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
                         return OpenOccurrenceChange.None;
                     }
 
-                    result.NewOccurrence = BuildFirstOccurrence(checklist, now, actingUserId);
+                    result.NewOccurrence = BuildFirstOccurrence(checklist, effectiveItems(), now, actingUserId);
                     return new OpenOccurrenceChange { NewOccurrence = result.NewOccurrence };
                 }
 
@@ -363,7 +578,7 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
 
                 if (reused || itemsChanged)
                 {
-                    snapshot = Snapshot(checklist);
+                    snapshot = MachinePmOccurrenceFactory.Snapshot(effectiveItems());
                     result.Refreshed = true;
                 }
 
@@ -473,6 +688,9 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
             IpAddress = ipAddress,
             Details = details,
         }, cancellationToken);
+
+        // Migration 021: every new occurrence of a plan (first one, or one created by an edit) is notified, after commit.
+        await MachinePmNotifications.ScheduledAsync(_notificationPublisher, occurrence.MachinePmId, occurrence.PmNo, machine.MachineCode, occurrence.ScheduledDate, actingUserId, cancellationToken);
     }
 
     // Unknown -> 404; a NEWLY chosen machine must be active (400). An unchanged machine that has been deactivated since
@@ -531,31 +749,20 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
     // Trim everything; applies-to and frequency are matched case-insensitively onto the exact CK values; blank item rows
     // are dropped. One place so Create and Update can never disagree about what a valid checklist looks like; the row
     // version is only checked for Update. isActive = the checklist status the configuration must satisfy.
-    private static (string Name, string AppliesTo, string? Frequency, int? MachineId, DateOnly? StartDate, IReadOnlyList<string> Labels) NormalizeAndValidate(
-        CreateMaintenanceChecklistRequest request, bool isActive, string? rowVersion, bool requireRowVersion, out byte[]? originalRowVersion)
+    // ownItemsAllowedForMachine: a Machine plan created before migration 020 that has no Checklist Master yet may keep its
+    // own items (no automatic conversion); every other Machine plan must use a Checklist Master.
+    private static (string Name, string AppliesTo, string? Frequency, int? MachineId, DateOnly? StartDate, int? SourceChecklistId, IReadOnlyList<string> Labels) NormalizeAndValidate(
+        CreateMaintenanceChecklistRequest request, bool isActive, bool ownItemsAllowedForMachine, string? rowVersion, bool requireRowVersion, out byte[]? originalRowVersion)
     {
-        var name = (request.ChecklistName ?? string.Empty).Trim();
-        var appliesToInput = string.IsNullOrWhiteSpace(request.AppliesTo) ? null : request.AppliesTo.Trim();
-        var appliesTo = MaintenanceChecklistAppliesTo.All.FirstOrDefault(a => string.Equals(a, appliesToInput, StringComparison.OrdinalIgnoreCase));
+        var (name, appliesToInput, appliesTo, labels, errors) = NormalizeCommon(request.ChecklistName, request.AppliesTo, request.Items);
         var frequencyInput = string.IsNullOrWhiteSpace(request.Frequency) ? null : request.Frequency.Trim();
         var frequency = ChecklistFrequency.All.FirstOrDefault(f => string.Equals(f, frequencyInput, StringComparison.OrdinalIgnoreCase));
-        var labels = (request.Items ?? Array.Empty<MaintenanceChecklistItemRequest>())
-            .Select(i => (i?.ItemLabel ?? string.Empty).Trim())
-            .Where(l => l.Length > 0)
-            .ToList();
 
-        var errors = new List<string>();
-
-        if (name.Length == 0) errors.Add("ChecklistName is required.");
-        else if (name.Length > NameMaxLength) errors.Add($"ChecklistName must be at most {NameMaxLength} characters.");
-
-        if (appliesToInput is null) errors.Add("AppliesTo is required.");
-        else if (appliesTo is null) errors.Add($"AppliesTo must be one of: {string.Join(", ", MaintenanceChecklistAppliesTo.All)}.");
-
-        // CK_maintenance_checklist_master_frequency / _active_config.
+        // CK_maintenance_checklist_master_frequency / _active_config. Migration 020: a plan ALWAYS has a frequency, also when
+        // inactive - a row without one is a Checklist Master.
         if (frequencyInput is null)
         {
-            if (isActive) errors.Add("Frequency is required.");
+            errors.Add("Frequency is required.");
         }
         else if (frequency is null)
         {
@@ -592,19 +799,29 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
             errors.Add("StartDate is required for a Machine checklist.");
         }
 
-        if (labels.Count == 0)
+        // Migration 020: where the plan's items come from. A Machine plan selects a Checklist Master and then has NO items
+        // of its own - arbitrary items (or item ids) are never accepted next to it; a Mold plan (and an older Machine plan
+        // without a master) keeps its own items.
+        var usesOwnItems = appliesTo != MaintenanceChecklistAppliesTo.Machine || ownItemsAllowedForMachine; // Mold (or not yet valid), or an older Machine plan
+        if (request.SourceChecklistId is <= 0)
         {
-            errors.Add(AtLeastOneItemMessage);
+            errors.Add("SourceChecklistId is not valid.");
         }
-        else
+        else if (appliesTo == MaintenanceChecklistAppliesTo.Mold && request.SourceChecklistId is not null)
         {
-            for (var i = 0; i < labels.Count; i++)
-            {
-                if (labels[i].Length > ItemLabelMaxLength)
-                {
-                    errors.Add($"Checklist item {i + 1} must be at most {ItemLabelMaxLength} characters.");
-                }
-            }
+            errors.Add("A Mold plan cannot use a Checklist Master.");
+        }
+        else if (request.SourceChecklistId is not null)
+        {
+            if (labels.Count > 0) errors.Add("Checklist items come from the selected Checklist Master and cannot be entered on the plan.");
+        }
+        else if (appliesTo == MaintenanceChecklistAppliesTo.Machine && !usesOwnItems)
+        {
+            errors.Add("Checklist Master is required for a Machine plan.");
+        }
+        else if (usesOwnItems)
+        {
+            ValidateLabels(labels, errors);
         }
 
         originalRowVersion = null;
@@ -619,7 +836,47 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
             throw new ValidationException(errors);
         }
 
-        return (name, appliesTo!, frequency, request.MachineId, request.StartDate, labels);
+        return (name, appliesTo!, frequency, request.MachineId, request.StartDate, request.SourceChecklistId, labels);
+    }
+
+    // Name, applies-to and item labels - the checklist rules shared by plans and Checklist Masters (analysis 4.10).
+    private static (string Name, string? AppliesToInput, string? AppliesTo, List<string> Labels, List<string> Errors) NormalizeCommon(
+        string? checklistName, string? appliesToValue, IReadOnlyList<MaintenanceChecklistItemRequest>? items)
+    {
+        var name = (checklistName ?? string.Empty).Trim();
+        var appliesToInput = string.IsNullOrWhiteSpace(appliesToValue) ? null : appliesToValue.Trim();
+        var appliesTo = MaintenanceChecklistAppliesTo.All.FirstOrDefault(a => string.Equals(a, appliesToInput, StringComparison.OrdinalIgnoreCase));
+        var labels = (items ?? Array.Empty<MaintenanceChecklistItemRequest>())
+            .Select(i => (i?.ItemLabel ?? string.Empty).Trim())
+            .Where(l => l.Length > 0)
+            .ToList();
+
+        var errors = new List<string>();
+
+        if (name.Length == 0) errors.Add("ChecklistName is required.");
+        else if (name.Length > NameMaxLength) errors.Add($"ChecklistName must be at most {NameMaxLength} characters.");
+
+        if (appliesToInput is null) errors.Add("AppliesTo is required.");
+        else if (appliesTo is null) errors.Add($"AppliesTo must be one of: {string.Join(", ", MaintenanceChecklistAppliesTo.All)}.");
+
+        return (name, appliesToInput, appliesTo, labels, errors);
+    }
+
+    private static void ValidateLabels(IReadOnlyList<string> labels, List<string> errors)
+    {
+        if (labels.Count == 0)
+        {
+            errors.Add(AtLeastOneItemMessage);
+            return;
+        }
+
+        for (var i = 0; i < labels.Count; i++)
+        {
+            if (labels[i].Length > ItemLabelMaxLength)
+            {
+                errors.Add($"Checklist item {i + 1} must be at most {ItemLabelMaxLength} characters.");
+            }
+        }
     }
 
     // sort_order is the 1-based position among the non-blank rows, so it is always consistent with what the user saw.
@@ -688,15 +945,24 @@ public sealed class MaintenanceChecklistService : IMaintenanceChecklistService
         MaintenanceTypeCode = checklist.MaintenanceType?.MaintenanceTypeCode,
         MaintenanceTypeName = checklist.MaintenanceType?.MaintenanceTypeName,
         MaintenanceTypeIsActive = checklist.MaintenanceType?.IsActive,
+        IsChecklistMaster = checklist.IsChecklistMaster,
+        SourceChecklistId = checklist.SourceChecklistId,
+        SourceChecklistCode = checklist.SourceChecklist?.ChecklistCode,
+        SourceChecklistName = checklist.SourceChecklist?.ChecklistName,
+        SourceChecklistIsActive = checklist.SourceChecklist?.IsActive,
         IsActive = checklist.IsActive,
-        Items = checklist.Items
-            .OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId)
-            .Select(i => new MaintenanceChecklistItemDto { ChecklistItemId = i.ChecklistItemId, SortOrder = i.SortOrder, ItemLabel = i.ItemLabel })
-            .ToList(),
+        // A plan with a Checklist Master shows the MASTER's items (it has none of its own).
+        Items = MapItems(checklist.SourceChecklistId is null ? checklist.Items : checklist.SourceChecklist?.Items ?? checklist.Items),
         CreatedAt = checklist.CreatedAt,
         CreatedBy = checklist.CreatedBy,
         UpdatedAt = checklist.UpdatedAt,
         UpdatedBy = checklist.UpdatedBy,
         RowVersion = Convert.ToBase64String(checklist.RowVersion),
     };
+
+    private static List<MaintenanceChecklistItemDto> MapItems(IEnumerable<MaintenanceChecklistItem> items) =>
+        items
+            .OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId)
+            .Select(i => new MaintenanceChecklistItemDto { ChecklistItemId = i.ChecklistItemId, SortOrder = i.SortOrder, ItemLabel = i.ItemLabel })
+            .ToList();
 }

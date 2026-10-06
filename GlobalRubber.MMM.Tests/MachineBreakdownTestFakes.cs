@@ -3,6 +3,7 @@ using GlobalRubber.MMM.Application.DTOs;
 using GlobalRubber.MMM.Application.Interfaces.Repositories;
 using GlobalRubber.MMM.Domain.Constants;
 using GlobalRubber.MMM.Domain.Entities;
+using GlobalRubber.MMM.Domain.Rules;
 
 namespace GlobalRubber.MMM.Tests;
 
@@ -60,12 +61,36 @@ internal sealed class InMemoryMachineBreakdownRepository : IMachineBreakdownRepo
     public bool FailNextSave { get; set; }
     public int Count => _breakdowns.Count;
     public MachineBreakdown Stored(int id) => _breakdowns.Single(b => b.MachineBreakdownId == id);
+    public Machine StoredMachine(int id) => _machines.Single(m => m.MachineId == id);
+    public void Seed(MachineBreakdown breakdown) => _breakdowns.Add(breakdown);
+
+    // Like the real repository: the plan runs on the machine (a copy, written back only when the whole write succeeds)
+    // with the number of the machine's OTHER unresolved breakdowns.
+    private Machine? ApplyPlan(BreakdownMachineStatusPlan? plan, int machineId, int? excludeId)
+    {
+        if (plan is null) return null;
+        var stored = _machines.SingleOrDefault(m => m.MachineId == machineId) ?? throw new NotFoundException(nameof(Machine), machineId);
+        var copy = new Machine { MachineId = stored.MachineId, MachineCode = stored.MachineCode, OperationalStatus = stored.OperationalStatus, UpdatedAt = stored.UpdatedAt, UpdatedBy = stored.UpdatedBy };
+        var others = _breakdowns.Count(b => b.MachineId == machineId && b.MachineBreakdownId != excludeId && MachineBreakdownRules.UnresolvedStages.Contains(b.Stage));
+        plan.ApplyToLockedMachine(copy, others);
+        return copy;
+    }
+
+    private void Commit(Machine? copy)
+    {
+        if (copy is null) return;
+        var stored = StoredMachine(copy.MachineId);
+        stored.OperationalStatus = copy.OperationalStatus;
+        stored.UpdatedAt = copy.UpdatedAt;
+        stored.UpdatedBy = copy.UpdatedBy;
+    }
 
     public Task<(IReadOnlyList<MachineBreakdown> Items, int TotalCount)> GetAllAsync(
         MachineBreakdownListQuery query, CancellationToken cancellationToken)
     {
         IEnumerable<MachineBreakdown> q = _breakdowns;
         if (query.MachineId is { } mid) q = q.Where(b => b.MachineId == mid);
+        if (query.ActiveOnly == true) q = q.Where(b => b.Stage != BreakdownStage.Closed);
         if (!string.IsNullOrEmpty(query.Stage?.Trim())) q = q.Where(b => b.Stage == query.Stage.Trim());
         var search = query.Search?.Trim();
         if (!string.IsNullOrEmpty(search))
@@ -78,22 +103,23 @@ internal sealed class InMemoryMachineBreakdownRepository : IMachineBreakdownRepo
         }
         var all = q.OrderByDescending(b => b.MachineBreakdownId).ToList();
         var page = all.Skip((query.PageNumber - 1) * query.PageSize).Take(query.PageSize)
-            .Select(b => Clone(b)).ToList();
+            .Select(b => WithMachine(Clone(b))).ToList(); // like the real Include(Machine)
         return Task.FromResult<(IReadOnlyList<MachineBreakdown>, int)>((page, all.Count));
     }
 
     public Task<MachineBreakdown?> GetByIdAsync(int id, CancellationToken cancellationToken)
     {
         var stored = _breakdowns.FirstOrDefault(b => b.MachineBreakdownId == id);
-        return Task.FromResult(stored is null ? (MachineBreakdown?)null : Clone(stored));
+        return Task.FromResult(stored is null ? (MachineBreakdown?)null : WithMachine(Clone(stored)));
     }
 
-    public Task<MachineBreakdown> AddAsync(MachineBreakdown breakdown, CancellationToken cancellationToken)
+    public Task<MachineBreakdown> AddAsync(MachineBreakdown breakdown, BreakdownMachineStatusPlan? machinePlan, CancellationToken cancellationToken)
     {
+        var machineCopy = ApplyPlan(machinePlan, breakdown.MachineId, excludeId: null);
         if (FailNextSave)
         {
             FailNextSave = false;
-            throw new ConflictException("Simulated save failure.");
+            throw new ConflictException("Simulated save failure."); // nothing committed: the machine keeps its status
         }
 
         _lastNumber++;
@@ -104,12 +130,14 @@ internal sealed class InMemoryMachineBreakdownRepository : IMachineBreakdownRepo
         var cloned = Clone(breakdown);
         cloned.Machine = machine!;
         _breakdowns.Add(Clone(breakdown));
+        Commit(machineCopy);
         return Task.FromResult(cloned);
     }
 
     public Task<MachineBreakdown> UpdateStageAsync(
-        MachineBreakdown breakdown, byte[] originalRowVersion, CancellationToken cancellationToken)
+        MachineBreakdown breakdown, byte[] originalRowVersion, BreakdownMachineStatusPlan? machinePlan, CancellationToken cancellationToken)
     {
+        var machineCopy = ApplyPlan(machinePlan, breakdown.MachineId, breakdown.MachineBreakdownId);
         var stored = _breakdowns.FirstOrDefault(b => b.MachineBreakdownId == breakdown.MachineBreakdownId)
             ?? throw new NotFoundException(nameof(MachineBreakdown), breakdown.MachineBreakdownId);
 
@@ -120,6 +148,7 @@ internal sealed class InMemoryMachineBreakdownRepository : IMachineBreakdownRepo
 
         stored.Stage = breakdown.Stage;
         stored.AssignedEngineerId = breakdown.AssignedEngineerId;
+        stored.AssignedToName = breakdown.AssignedToName;
         stored.AssignedAt = breakdown.AssignedAt;
         stored.MaintenanceStartedAt = breakdown.MaintenanceStartedAt;
         stored.ResolvedAt = breakdown.ResolvedAt;
@@ -132,10 +161,17 @@ internal sealed class InMemoryMachineBreakdownRepository : IMachineBreakdownRepo
         // Bump fake row version.
         stored.RowVersion = new byte[] { (byte)(stored.RowVersion[0] + 1) };
         breakdown.RowVersion = stored.RowVersion;
+        Commit(machineCopy);
 
         var updated = Clone(stored);
         updated.Machine = _machines.SingleOrDefault(m => m.MachineId == stored.MachineId)!;
         return Task.FromResult(updated);
+    }
+
+    private MachineBreakdown WithMachine(MachineBreakdown b)
+    {
+        b.Machine = _machines.SingleOrDefault(m => m.MachineId == b.MachineId)!;
+        return b;
     }
 
     private static MachineBreakdown Clone(MachineBreakdown b) => new()
@@ -152,6 +188,7 @@ internal sealed class InMemoryMachineBreakdownRepository : IMachineBreakdownRepo
         Description = b.Description,
         Stage = b.Stage,
         AssignedEngineerId = b.AssignedEngineerId,
+        AssignedToName = b.AssignedToName,
         AssignedAt = b.AssignedAt,
         MaintenanceStartedAt = b.MaintenanceStartedAt,
         ResolvedAt = b.ResolvedAt,

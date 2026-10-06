@@ -43,15 +43,17 @@ public class MaintenanceChecklistOccurrenceSyncTests
             ScheduledDate = LegacyDue, CompletedDate = LegacyDue, Status = MachinePmStatus.Completed, RowVersion = new byte[] { 1 },
         }).ToList();
         pms.Add(new MachinePm { MachinePmId = 6, PmNo = "MPM-0006", MachineId = 1, MaintenanceTypeId = 19, ChecklistId = 3, EngineerId = 3, ScheduledDate = LegacyDue, Status = MachinePmStatus.Scheduled, RowVersion = new byte[] { 7 } });
-        var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList, pms);
+        var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.All(), machineList, pms);
         var audit = new RecordingAuditLog();
         var clock = new SettableClock();
-        var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()), users, clock, audit, NullLogger<MaintenanceChecklistService>.Instance);
+        var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()), users, clock, audit, new RecordingNotificationPublisher(), NullLogger<MaintenanceChecklistService>.Instance);
 
         var press = await service.CreateAsync(new CreateMaintenanceChecklistRequest
         {
             ChecklistName = "Press Daily", AppliesTo = appliesTo, Frequency = frequency, MachineId = machineId, StartDate = clock.Today, // 25-Sep
-            Items = Labels("Oil level checked", "Hydraulic pressure checked", "Safety guard checked"),
+            // Migration 020: a Machine plan uses a Checklist Master (seeded with the same three items); a Mold plan keeps its own.
+            SourceChecklistId = appliesTo == "Machine" ? repo.SeedMaster("Machine", "Oil level checked", "Hydraulic pressure checked", "Safety guard checked") : null,
+            Items = appliesTo == "Machine" ? null : Labels("Oil level checked", "Hydraulic pressure checked", "Safety guard checked"),
         }, 1, null, CancellationToken.None);
 
         if (appliesTo == "Machine")
@@ -82,7 +84,12 @@ public class MaintenanceChecklistOccurrenceSyncTests
             Frequency = frequency == "(keep)" ? stored.Frequency : frequency,
             MachineId = machineId == -1 ? stored.MachineId : machineId,
             StartDate = startDate ?? stored.StartDate,
-            Items = Labels(items ?? stored.Items.OrderBy(i => i.SortOrder).Select(i => i.ItemLabel).ToArray()),
+            // Migration 020: a Machine plan's items come from its Checklist Master - "new items" = another master with them
+            // (Mold -> Machine picks a master with the plan's current items); a Mold plan has its own.
+            SourceChecklistId = (appliesTo ?? stored.AppliesTo) == "Mold" ? null
+                : items is not null || stored.SourceChecklistId is null ? s.Repo.SeedMaster("Machine", items ?? s.Repo.EffectiveLabels(stored.ChecklistId))
+                : stored.SourceChecklistId,
+            Items = (appliesTo ?? stored.AppliesTo) == "Mold" ? Labels(items ?? s.Repo.EffectiveLabels(stored.ChecklistId)) : null,
             RowVersion = rowVersion ?? Convert.ToBase64String(stored.RowVersion),
         };
     }
@@ -405,7 +412,7 @@ public class MaintenanceChecklistOccurrenceSyncTests
         var entry = Assert.Single(s.Audit.Entries);
         Assert.Equal("ChecklistUpdated", entry.Action);
         Assert.StartsWith("Sakthi updated checklist 'Press Daily'", entry.Description);
-        Assert.Contains("Changed: frequency, machine, items.", entry.Description);
+        Assert.Contains("Changed: frequency, machine, checklist_master.", entry.Description); // migration 020: new items = another Checklist Master
         Assert.Contains("open PM MPM-0007 moved from MAC-0002 to MAC-0001; open PM MPM-0007 re-dated from 2026-09-25 to 2026-10-02; open PM MPM-0007 checklist refreshed.", entry.Description);
         Assert.Contains(entry.Details, d => d is { FieldName: "frequency", OldValue: "Daily", NewValue: "Weekly" });
         Assert.Contains(entry.Details, d => d is { FieldName: "machine", OldValue: "MAC-0002", NewValue: "MAC-0001" });

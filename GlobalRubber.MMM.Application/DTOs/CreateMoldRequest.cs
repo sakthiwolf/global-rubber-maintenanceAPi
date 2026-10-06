@@ -18,6 +18,11 @@ public class CreateMoldRequest
     public string? SerialNumber { get; init; }
     public string? Location { get; init; }
     public string? StorageLocation { get; init; }
+
+    /// <summary>F01 fields (migration 024) - optional; trimmed, blank = null. Max 100 / 250 / 100 characters.</summary>
+    public string? PartNo { get; init; }
+    public string? PartDescription { get; init; }
+    public string? Ownership { get; init; }
     public DateOnly? CommissionDate { get; init; }
 
     /// <summary>Required. Max &gt; 0; Warning &lt; Max; Replacement &gt; Warning and &lt;= Max (the CK constraints).</summary>

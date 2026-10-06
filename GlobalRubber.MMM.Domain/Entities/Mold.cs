@@ -21,6 +21,16 @@ public class Mold : AuditableEntity
     public string? SerialNumber { get; set; }
     public string? Location { get; set; }
     public string? StorageLocation { get; set; }
+
+    /// <summary>F01 "Part No" (migration 024). Optional.</summary>
+    public string? PartNo { get; set; }
+
+    /// <summary>F01 "Part Description" (migration 024). Optional.</summary>
+    public string? PartDescription { get; set; }
+
+    /// <summary>F01 "Ownership" (migration 024). Optional.</summary>
+    public string? Ownership { get; set; }
+
     public DateOnly? CommissionDate { get; set; }
     public int MaximumShots { get; set; } = 500000;
     public int WarningShots { get; set; } = 450000;

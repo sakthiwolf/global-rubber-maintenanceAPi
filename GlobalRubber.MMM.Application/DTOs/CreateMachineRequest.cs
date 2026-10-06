@@ -10,13 +10,23 @@ public class CreateMachineRequest
 {
     public string MachineName { get; init; } = string.Empty;
     public string MachineType { get; init; } = string.Empty;
-    public int DepartmentId { get; init; }
+    /// <summary>Optional (migration 023): null = no department; a given one must exist (404) and, when newly chosen, be active (400).</summary>
+    public int? DepartmentId { get; init; }
     public string Location { get; init; } = string.Empty;
     public string? Manufacturer { get; init; }
     public string? Model { get; init; }
     public string? SerialNumber { get; init; }
     public string? Capacity { get; init; }
     public DateOnly? InstallationDate { get; init; }
+
+    /// <summary>F01 "Range" (machine_range NVARCHAR(100)); optional.</summary>
+    public string? MachineRange { get; init; }
+
+    /// <summary>F01 "Ownership" (ownership NVARCHAR(100)); optional.</summary>
+    public string? Ownership { get; init; }
+
+    /// <summary>F01 "Month &amp; Year of Purchase" (purchase_date DATE, yyyy-MM-dd); optional, separate from InstallationDate.</summary>
+    public DateOnly? PurchaseDate { get; init; }
 
     /// <summary>Required, &gt; 0 (CK_machine_master_maintenance_frequency_days). The form defaults it to 30.</summary>
     public int? MaintenanceFrequencyDays { get; init; }

@@ -29,10 +29,10 @@ public class MaintenanceChecklistMaintenanceTypeTests
         var machineList = MachineTestData.Machines();
         var types = MaintenanceTypeTestData.MaintenanceTypes();
         types.Add(new MaintenanceType { MaintenanceTypeId = 4, MaintenanceTypeCode = "MT-0004", MaintenanceTypeName = "Retired Machine Type", AppliesTo = "Machine", IsActive = false, RowVersion = new byte[] { 1 } });
-        var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList);
+        var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.All(), machineList);
         var audit = new RecordingAuditLog();
         var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(types), users,
-            new FixedClock(), audit, NullLogger<MaintenanceChecklistService>.Instance);
+            new FixedClock(), audit, new RecordingNotificationPublisher(), NullLogger<MaintenanceChecklistService>.Instance);
         return new Sut(service, repo, audit);
     }
 
@@ -41,7 +41,9 @@ public class MaintenanceChecklistMaintenanceTypeTests
         {
             ChecklistName = "Press Daily Inspection", AppliesTo = appliesTo, Frequency = "Daily",
             MachineId = appliesTo == "Machine" ? 2 : null, StartDate = Today, MaintenanceTypeId = maintenanceTypeId,
-            Items = new[] { new MaintenanceChecklistItemRequest { ItemLabel = "Oil level checked" } },
+            // Migration 020: a Machine plan uses Checklist Master 901; a Mold plan keeps its own items.
+            SourceChecklistId = appliesTo == "Machine" ? MaintenanceChecklistTestData.DefaultMasterId : null,
+            Items = appliesTo == "Machine" ? null : new[] { new MaintenanceChecklistItemRequest { ItemLabel = "Oil level checked" } },
         };
 
     private static UpdateMaintenanceChecklistRequest Edit(Sut s, int checklistId, int? maintenanceTypeId, string? name = null)
@@ -50,7 +52,7 @@ public class MaintenanceChecklistMaintenanceTypeTests
         return new UpdateMaintenanceChecklistRequest
         {
             ChecklistName = name ?? stored.ChecklistName, AppliesTo = stored.AppliesTo, Frequency = stored.Frequency, MachineId = stored.MachineId,
-            StartDate = stored.StartDate, MaintenanceTypeId = maintenanceTypeId,
+            StartDate = stored.StartDate, MaintenanceTypeId = maintenanceTypeId, SourceChecklistId = stored.SourceChecklistId,
             Items = stored.Items.OrderBy(i => i.SortOrder).Select(i => new MaintenanceChecklistItemRequest { ItemLabel = i.ItemLabel }).ToList(),
             RowVersion = Convert.ToBase64String(stored.RowVersion),
         };

@@ -165,13 +165,25 @@ public sealed class MoldPmService : IMoldPmService
 
         var maintenanceBy = string.IsNullOrWhiteSpace(request.MaintenanceBy) ? null : request.MaintenanceBy.Trim();
         var remarks = string.IsNullOrWhiteSpace(request.Remarks) ? null : request.Remarks.Trim();
+        var results = request.Results ?? Array.Empty<MoldPmChecklistResultRequest>();
+        var lineIds = pm.ChecklistItems.Select(i => i.MoldPmChecklistId).ToHashSet();
 
         var errors = new List<string>();
         if (maintenanceBy is null) errors.Add("MaintenanceBy is required.");
         else if (maintenanceBy.Length > MaintenanceByMaxLength) errors.Add($"MaintenanceBy must be at most {MaintenanceByMaxLength} characters.");
         if (remarks is { Length: > RemarksMaxLength }) errors.Add($"Remarks must be at most {RemarksMaxLength} characters.");
+        // Migration 025 (manual PM checklist) - the same rules as Machine PM; unchecked lines are allowed.
+        if (results.Any(r => !lineIds.Contains(r.MoldPmChecklistId))) errors.Add("A checklist result does not belong to this maintenance record.");
+        if (results.GroupBy(r => r.MoldPmChecklistId).Any(g => g.Count() > 1)) errors.Add("A checklist item is listed more than once.");
         var originalRowVersion = DecodeRequiredRowVersion(request.RowVersion, errors);
 
+        var ticks = results.ToDictionary(r => r.MoldPmChecklistId, r => r.IsChecked);
+        foreach (var line in pm.ChecklistItems)
+        {
+            line.IsChecked = ticks.TryGetValue(line.MoldPmChecklistId, out var isChecked) && isChecked; // unlisted = unchecked
+        }
+
+        var isManual = pm.ScheduleType == PmScheduleType.Manual;
         var statusBefore = pm.Status;
         var today = _dateTimeProvider.Today; // plant (IST) date - never client-controlled
         var now = _dateTimeProvider.UtcNow;
@@ -196,7 +208,9 @@ public sealed class MoldPmService : IMoldPmService
             var threshold = pm.ThresholdShots ?? (mold.PmCycleStartShots + interval);
 
             pm.UsageAtCompletion = mold.CurrentUsageShots;
-            if (interval > 0)
+            // Migration 025: a manual (one-time) PM is independent of the usage-based cycle - completing it never re-anchors
+            // the cycle (an open Shot-based PM stays due as it was).
+            if (interval > 0 && !isManual)
             {
                 mold.PmCycleStartShots = MoldPmRules.CycleStartAfterCompletion(threshold, interval, mold.CurrentUsageShots);
                 nextThreshold = MoldPmRules.NextThreshold(mold.PmCycleStartShots, interval);
@@ -221,16 +235,26 @@ public sealed class MoldPmService : IMoldPmService
             new("maintenance_by", null, completed.MaintenanceBy),
             new("usage_at_trigger", null, Raw(completed.MoldUsageAtService)),
             new("usage_at_completion", null, Raw(completed.UsageAtCompletion ?? 0)),
-            new("threshold_shots", null, completed.ThresholdShots?.ToString(CultureInfo.InvariantCulture)),
-            new($"pm_cycle_start_shots ({code})", Raw(before.CycleStart), Raw(completed.Mold.PmCycleStartShots)),
-            new("next_threshold_shots", null, Raw(nextThreshold)),
         };
+        if (!isManual)
+        {
+            details.Add(new AuditLogDetailEntry("threshold_shots", null, completed.ThresholdShots?.ToString(CultureInfo.InvariantCulture)));
+            details.Add(new AuditLogDetailEntry($"pm_cycle_start_shots ({code})", Raw(before.CycleStart), Raw(completed.Mold.PmCycleStartShots)));
+            details.Add(new AuditLogDetailEntry("next_threshold_shots", null, Raw(nextThreshold)));
+        }
+        else if (completed.ChecklistItems.Count > 0)
+        {
+            details.Add(new AuditLogDetailEntry("checklist_items_checked", null, $"{completed.ChecklistItems.Count(i => i.IsChecked)} of {completed.ChecklistItems.Count}"));
+        }
         if (completed.Remarks is not null) details.Add(new AuditLogDetailEntry("remarks", null, completed.Remarks));
         if (before.Status != completed.Mold.Status) details.Add(new AuditLogDetailEntry($"mold_status ({code})", before.Status, completed.Mold.Status));
 
         await WriteAuditAsync(MoldPmAuditNames.Completed, completed, actingUserId, ipAddress,
-            actor => $"{actor} completed mold PM {completed.PmNo} for mold {code} on {today:yyyy-MM-dd}, performed by {completed.MaintenanceBy}, " +
-                     $"at {N(completed.UsageAtCompletion ?? 0)} shots (due at {N(completed.ThresholdShots ?? 0)}). Next maintenance threshold: {N(nextThreshold)} shots.",
+            actor => isManual
+                ? $"{actor} completed manual mold PM {completed.PmNo} '{completed.Title}' for mold {code} (due {completed.ScheduledDate:yyyy-MM-dd}) on {today:yyyy-MM-dd}, " +
+                  $"performed by {completed.MaintenanceBy}, at {N(completed.UsageAtCompletion ?? 0)} shots. The usage-based maintenance cycle is unchanged."
+                : $"{actor} completed mold PM {completed.PmNo} for mold {code} on {today:yyyy-MM-dd}, performed by {completed.MaintenanceBy}, " +
+                  $"at {N(completed.UsageAtCompletion ?? 0)} shots (due at {N(completed.ThresholdShots ?? 0)}). Next maintenance threshold: {N(nextThreshold)} shots.",
             details, cancellationToken);
 
         await _evaluator.WriteAuditAsync(evaluation, $"completion of mold PM {completed.PmNo}", ipAddress, cancellationToken);
@@ -310,7 +334,8 @@ public sealed class MoldPmService : IMoldPmService
             MoldName = pm.Mold?.MoldName ?? string.Empty,
             MoldStatus = pm.Mold?.Status ?? string.Empty,
             Category = pm.Category,
-            Trigger = pm.Category == MoldPmCategory.ShotBased ? MoldPmAuditNames.UsageThresholdTrigger : pm.Category,
+            Trigger = pm.ScheduleType == PmScheduleType.Manual ? MoldPmAuditNames.ManualTrigger
+                : pm.Category == MoldPmCategory.ShotBased ? MoldPmAuditNames.UsageThresholdTrigger : pm.Category,
             ScheduledDate = pm.ScheduledDate,
             CompletedDate = pm.CompletedDate,
             UsageAtTrigger = pm.MoldUsageAtService,
@@ -323,6 +348,12 @@ public sealed class MoldPmService : IMoldPmService
             MaintenanceBy = pm.MaintenanceBy,
             Remarks = pm.Remarks,
             Status = pm.Status,
+            ScheduleType = pm.ScheduleType,
+            Title = pm.Title,
+            ChecklistItems = pm.ChecklistItems
+                .OrderBy(i => i.SortOrder).ThenBy(i => i.MoldPmChecklistId)
+                .Select(i => new MoldPmChecklistItemDto { MoldPmChecklistId = i.MoldPmChecklistId, SortOrder = i.SortOrder, ItemLabel = i.ItemLabel, IsChecked = i.IsChecked })
+                .ToList(),
             CreatedBySystem = pm.CreatedBy is null,
             CreatedAt = pm.CreatedAt,
             CreatedBy = pm.CreatedBy,

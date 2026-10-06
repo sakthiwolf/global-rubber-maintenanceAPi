@@ -43,4 +43,11 @@ public interface IMoldPmRepository
     Task<MoldPm> CompleteAsync(
         MoldPm pm, byte[] originalRowVersion, Action<Mold> applyToLockedMold, Func<Mold, CancellationToken, Task> afterSave,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Migration 025: inserts ONE manual mold PM with its checklist snapshot, its number from the MOLD_PM sequence and the
+    /// mold's CURRENT usage as the usage at creation (read under the mold row lock), in one transaction. The mold row and
+    /// its usage-based cycle are never changed.
+    /// </summary>
+    Task<MoldPm> AddManualAsync(MoldPm pm, CancellationToken cancellationToken);
 }

@@ -17,10 +17,33 @@ namespace GlobalRubber.MMM.Api.Controllers;
 public sealed class MoldPmController : BaseApiController
 {
     private readonly IMoldPmService _moldPmService;
+    private readonly IManualPmService _manualPmService;
 
-    public MoldPmController(IMoldPmService moldPmService)
+    public MoldPmController(IMoldPmService moldPmService, IManualPmService manualPmService)
     {
         _moldPmService = moldPmService;
+        _manualPmService = manualPmService;
+    }
+
+    /// <summary>
+    /// Manual / One-Time schedule (migration 025): creates exactly ONE mold PM (category 'Scheduled') on the given date,
+    /// independent of the usage-based cycle. 400 for a missing title / mold / date, a Retired mold or an inactive Checklist
+    /// Master; 404 for an unknown mold or master.
+    /// </summary>
+    [HttpPost("manual")]
+    [RequirePermission(ModuleCodes.TrnMoldPm, PermissionAction.Add)]
+    [ProducesResponseType(typeof(ApiResponse<MoldPmDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ApiResponse<MoldPmDto>>> ScheduleManual(
+        [FromBody] ScheduleManualMoldPmRequest request, CancellationToken cancellationToken)
+    {
+        var pm = await _manualPmService.ScheduleMoldAsync(
+            request, GetAuthenticatedUserId(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+
+        return CreatedAtAction(nameof(GetById), new { id = pm.MoldPmId }, ApiResponse<MoldPmDto>.Ok(pm, "Manual maintenance scheduled successfully."));
     }
 
     /// <summary>

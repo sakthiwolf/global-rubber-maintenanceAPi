@@ -15,13 +15,23 @@ public class Machine : AuditableEntity
     public string MachineCode { get; set; } = string.Empty;
     public string MachineName { get; set; } = string.Empty;
     public string MachineType { get; set; } = string.Empty;
-    public int DepartmentId { get; set; }
+    /// <summary>Optional since migration 023 (F01 has no department; it can be assigned later).</summary>
+    public int? DepartmentId { get; set; }
     public string Location { get; set; } = string.Empty;
     public string? Manufacturer { get; set; }
     public string? Model { get; set; }
     public string? SerialNumber { get; set; }
     public string? Capacity { get; set; }
     public DateOnly? InstallationDate { get; set; }
+
+    /// <summary>Migration 022 - F01 "Range" (e.g. "40/40 Inches"); free text, optional.</summary>
+    public string? MachineRange { get; set; }
+
+    /// <summary>Migration 022 - F01 "Ownership" (e.g. "GRP", "DAI"); free text, optional.</summary>
+    public string? Ownership { get; set; }
+
+    /// <summary>Migration 022 - F01 "Month &amp; Year of Purchase"; optional. Not the installation date.</summary>
+    public DateOnly? PurchaseDate { get; set; }
     public int MaintenanceFrequencyDays { get; set; } = 30;
     public int? ResponsibleEngineerId { get; set; }
     public string Criticality { get; set; } = MachineCriticality.Medium;
@@ -31,6 +41,6 @@ public class Machine : AuditableEntity
     public string? Remarks { get; set; }
     public bool IsActive { get; set; } = true;
 
-    public Department Department { get; set; } = null!;
+    public Department? Department { get; set; } // null when the machine has no department (migration 023)
     public Employee? ResponsibleEngineer { get; set; }
 }

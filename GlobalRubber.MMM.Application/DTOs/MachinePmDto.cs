@@ -35,6 +35,12 @@ public sealed class MachinePmDto
     /// <summary>Scheduled / Completed ('In Progress' exists in the database but is never set - there is no start step).</summary>
     public string Status { get; init; } = string.Empty;
 
+    /// <summary>Migration 025: Automatic (a plan occurrence) or Manual (one-time).</summary>
+    public string ScheduleType { get; init; } = string.Empty;
+
+    /// <summary>Migration 025: the reason / name of a manual PM; null for Automatic.</summary>
+    public string? Title { get; init; }
+
     /// <summary>Not completed and due before today's plant (IST) date - shown as a badge; never stored (D-03).</summary>
     public bool IsOverdue { get; init; }
 
@@ -67,6 +73,9 @@ public sealed class MachinePmBucketCountsDto
     public int Weekly { get; init; }
     public int Monthly { get; init; }
     public int Yearly { get; init; }
+
+    /// <summary>Migration 025: due open MANUAL (one-time) PMs - scheduled on or before today, overdue included.</summary>
+    public int OneTime { get; init; }
 
     /// <summary>Completed, any frequency.</summary>
     public int Completed { get; init; }

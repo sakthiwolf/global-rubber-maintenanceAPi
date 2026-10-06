@@ -42,18 +42,49 @@ internal sealed class InMemoryMoldPmRepository : IMoldPmRepository
         IntervalShots = p.IntervalShots, UsageAtCompletion = p.UsageAtCompletion, MaintenanceBy = p.MaintenanceBy, Remarks = p.Remarks,
         Status = p.Status, CreatedAt = p.CreatedAt, CreatedBy = p.CreatedBy, UpdatedAt = p.UpdatedAt, UpdatedBy = p.UpdatedBy,
         RowVersion = p.RowVersion.ToArray(), Mold = _molds.Single(m => m.MoldId == p.MoldId),
+        ScheduleType = p.ScheduleType, Title = p.Title, ChecklistId = p.ChecklistId, UsageReset = p.UsageReset,
+        ChecklistItems = p.ChecklistItems.OrderBy(i => i.SortOrder).Select(i => new MoldPmChecklistItem
+        {
+            MoldPmChecklistId = i.MoldPmChecklistId, MoldPmId = i.MoldPmId, SortOrder = i.SortOrder, ItemLabel = i.ItemLabel,
+            ChecklistItemId = i.ChecklistItemId, IsChecked = i.IsChecked,
+        }).ToList(),
     };
+
+    private int _nextLineId = 7000;
+    public int AddManualCalls { get; private set; }
+
+    // Migration 025: one manual PM - MPMD-NNNN, the mold's current usage, its snapshot lines; the mold is never changed.
+    public Task<MoldPm> AddManualAsync(MoldPm pm, CancellationToken cancellationToken)
+    {
+        AddManualCalls++;
+        var mold = _molds.SingleOrDefault(m => m.MoldId == pm.MoldId) ?? throw new NotFoundException(nameof(Mold), pm.MoldId);
+        _lastNumber++;
+        pm.MoldPmId = Pms.Count + 1;
+        pm.PmNo = $"MPMD-{_lastNumber:0000}";
+        pm.MoldUsageAtService = mold.CurrentUsageShots;
+        pm.RowVersion = new[] { (byte)_nextRowVersion++ };
+        foreach (var line in pm.ChecklistItems)
+        {
+            line.MoldPmChecklistId = _nextLineId++;
+            line.MoldPmId = pm.MoldPmId;
+        }
+
+        Pms.Add(Copy(pm));
+        pm.Mold = mold;
+        return Task.FromResult(pm);
+    }
 
     private IEnumerable<MoldPm> Filtered(MoldPmListQuery q) =>
         Pms.Where(p => q.MoldId is null || p.MoldId == q.MoldId)
            .Where(p => string.IsNullOrWhiteSpace(q.Search) || p.PmNo.Contains(q.Search.Trim(), StringComparison.OrdinalIgnoreCase)
-                       || _molds.Single(m => m.MoldId == p.MoldId).MoldCode.Contains(q.Search.Trim(), StringComparison.OrdinalIgnoreCase));
+                       || _molds.Single(m => m.MoldId == p.MoldId).MoldCode.Contains(q.Search.Trim(), StringComparison.OrdinalIgnoreCase)
+                       || (p.Title?.Contains(q.Search.Trim(), StringComparison.OrdinalIgnoreCase) ?? false));
 
     public Task<(IReadOnlyList<MoldPm> Items, int TotalCount)> GetAllAsync(MoldPmListQuery request, DateOnly today, CancellationToken cancellationToken)
     {
         var rows = request.Bucket switch
         {
-            MoldPmBucket.Due => Filtered(request).Where(p => p.Status == MoldPmStatus.Scheduled && p.ScheduledDate >= today),
+            MoldPmBucket.Due => Filtered(request).Where(p => p.Status == MoldPmStatus.Scheduled && p.ScheduledDate == today),
             MoldPmBucket.Overdue => Filtered(request).Where(p => p.Status == MoldPmStatus.Scheduled && p.ScheduledDate < today),
             MoldPmBucket.InProgress => Filtered(request).Where(p => p.Status == MoldPmStatus.InProgress),
             MoldPmBucket.Completed => Filtered(request).Where(p => p.Status == MoldPmStatus.Completed),
@@ -69,7 +100,7 @@ internal sealed class InMemoryMoldPmRepository : IMoldPmRepository
         var rows = Filtered(request).ToList();
         return Task.FromResult(new MoldPmCountsDto
         {
-            Due = rows.Count(p => p.Status == MoldPmStatus.Scheduled && p.ScheduledDate >= today),
+            Due = rows.Count(p => p.Status == MoldPmStatus.Scheduled && p.ScheduledDate == today),
             Overdue = rows.Count(p => p.Status == MoldPmStatus.Scheduled && p.ScheduledDate < today),
             InProgress = rows.Count(p => p.Status == MoldPmStatus.InProgress),
             Completed = rows.Count(p => p.Status == MoldPmStatus.Completed),
@@ -83,8 +114,8 @@ internal sealed class InMemoryMoldPmRepository : IMoldPmRepository
     {
         IReadOnlyList<MoldUsageSnapshot> rows = _molds.OrderBy(m => m.MoldCode).Select(m =>
         {
-            var open = Pms.FirstOrDefault(p => p.MoldId == m.MoldId && p.Status != MoldPmStatus.Completed);
-            var last = Pms.Where(p => p.MoldId == m.MoldId && p.Status == MoldPmStatus.Completed).OrderByDescending(p => p.CompletedDate).ThenByDescending(p => p.MoldPmId).FirstOrDefault();
+            var open = Pms.FirstOrDefault(p => p.MoldId == m.MoldId && p.Category == MoldPmCategory.ShotBased && p.Status != MoldPmStatus.Completed);
+            var last = Pms.Where(p => p.MoldId == m.MoldId && p.Category == MoldPmCategory.ShotBased && p.Status == MoldPmStatus.Completed).OrderByDescending(p => p.CompletedDate).ThenByDescending(p => p.MoldPmId).FirstOrDefault();
             return new MoldUsageSnapshot(m.MoldId, m.MoldCode, m.MoldName, m.Status, m.CurrentUsageShots, m.MaintenanceFrequencyShots, m.PmWarningShots,
                 m.PmCycleStartShots, last?.UsageAtCompletion, last?.CompletedDate, open?.MoldPmId, open?.PmNo, open?.Status, open?.ScheduledDate);
         }).ToList();
@@ -142,6 +173,11 @@ internal sealed class InMemoryMoldPmRepository : IMoldPmRepository
         stored.UpdatedAt = pm.UpdatedAt;
         stored.UpdatedBy = pm.UpdatedBy;
         stored.RowVersion = new[] { (byte)_nextRowVersion++ };
+        foreach (var line in stored.ChecklistItems)
+        {
+            line.IsChecked = pm.ChecklistItems.SingleOrDefault(i => i.MoldPmChecklistId == line.MoldPmChecklistId)?.IsChecked ?? line.IsChecked;
+        }
+
         Apply(locked, storedMold);
 
         try

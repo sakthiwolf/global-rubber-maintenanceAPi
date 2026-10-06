@@ -23,10 +23,10 @@ public class MaintenanceChecklistServiceTests
         var departments = new InMemoryDepartmentRepository(DepartmentTestData.Departments());
         var employees = new InMemoryEmployeeRepository(EmployeeTestData.Employees(), departments);
         var machineList = MachineTestData.Machines();
-        var checklists = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList);
+        var checklists = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.All(), machineList);
         var audit = new RecordingAuditLog();
         var service = new MaintenanceChecklistService(checklists, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()), users,
-            new FixedClock(), auditOverride ?? audit, NullLogger<MaintenanceChecklistService>.Instance);
+            new FixedClock(), auditOverride ?? audit, new RecordingNotificationPublisher(), NullLogger<MaintenanceChecklistService>.Instance);
         return new Sut(service, checklists, audit, users);
     }
 
@@ -40,9 +40,14 @@ public class MaintenanceChecklistServiceTests
         string? frequency = "Daily", int? machineId = -1) =>
         new()
         {
-            ChecklistName = name, AppliesTo = appliesTo, Items = items ?? Items("Hoses checked", "Pressure recorded"), Frequency = frequency, StartDate = new DateOnly(2026, 3, 1),
-            MachineId = machineId == -1 ? (string.Equals(appliesTo?.Trim(), "Machine", StringComparison.OrdinalIgnoreCase) ? 1 : null) : machineId,
+            // Migration 020: a new Machine plan uses Checklist Master 901 (items "Hoses checked", "Pressure recorded"); a Mold plan has its own.
+            ChecklistName = name, AppliesTo = appliesTo, Frequency = frequency, StartDate = new DateOnly(2026, 3, 1),
+            SourceChecklistId = IsMachine(appliesTo) ? MaintenanceChecklistTestData.DefaultMasterId : null,
+            Items = items ?? (IsMachine(appliesTo) ? null : Items("Hoses checked", "Pressure recorded")),
+            MachineId = machineId == -1 ? (IsMachine(appliesTo) ? 1 : null) : machineId,
         };
+
+    private static bool IsMachine(string? appliesTo) => string.Equals(appliesTo?.Trim(), "Machine", StringComparison.OrdinalIgnoreCase);
 
     private static UpdateMaintenanceChecklistRequest Edit(
         InMemoryMaintenanceChecklistRepository repo, int id, string? name = null, string? appliesTo = null,
@@ -54,7 +59,10 @@ public class MaintenanceChecklistServiceTests
             Frequency = frequency ?? repo.Stored(id).Frequency,
             MachineId = machineId == -1 ? (string.Equals(appliesTo ?? repo.Stored(id).AppliesTo, "Mold", StringComparison.OrdinalIgnoreCase) ? null : repo.Stored(id).MachineId) : machineId,
             StartDate = repo.Stored(id).StartDate ?? new DateOnly(2026, 3, 1),
-            Items = items ?? Items(repo.Stored(id).Items.OrderBy(i => i.SortOrder).Select(i => i.ItemLabel).ToArray()),
+            SourceChecklistId = IsMachine(appliesTo ?? repo.Stored(id).AppliesTo) ? repo.Stored(id).SourceChecklistId : null,
+            Items = items ?? Items(IsMachine(appliesTo ?? repo.Stored(id).AppliesTo) || repo.Stored(id).SourceChecklistId is null
+                ? repo.Stored(id).Items.OrderBy(i => i.SortOrder).Select(i => i.ItemLabel).ToArray()
+                : repo.EffectiveLabels(id)),
             RowVersion = rowVersion ?? Convert.ToBase64String(repo.Stored(id).RowVersion),
         };
 
@@ -180,8 +188,13 @@ public class MaintenanceChecklistServiceTests
         Assert.Contains("Please add at least one checklist item.", missing.Errors);
 
         var noItems = await Assert.ThrowsAsync<ValidationException>(() =>
-            s.Service.CreateAsync(new CreateMaintenanceChecklistRequest { ChecklistName = "X", AppliesTo = "Machine", Items = null }, 1, null, CancellationToken.None));
+            s.Service.CreateAsync(new CreateMaintenanceChecklistRequest { ChecklistName = "X", AppliesTo = "Mold", Frequency = "Daily", Items = null }, 1, null, CancellationToken.None));
         Assert.Contains("Please add at least one checklist item.", noItems.Errors);
+
+        // Migration 020: a Machine plan takes its items from a Checklist Master instead.
+        var noMaster = await Assert.ThrowsAsync<ValidationException>(() =>
+            s.Service.CreateAsync(new CreateMaintenanceChecklistRequest { ChecklistName = "X", AppliesTo = "Machine", Items = null }, 1, null, CancellationToken.None));
+        Assert.Contains("Checklist Master is required for a Machine plan.", noMaster.Errors);
 
         var invalid = await Assert.ThrowsAsync<ValidationException>(() =>
             s.Service.CreateAsync(NewChecklist(name: new string('n', 151), appliesTo: "Both", items: Items("ok", new string('i', 201))), 1, null, CancellationToken.None));
@@ -192,7 +205,7 @@ public class MaintenanceChecklistServiceTests
         Assert.Equal(0, s.Checklists.AddCalls);
         Assert.Empty(s.Audit.Entries);
 
-        var atLimit = await s.Service.CreateAsync(NewChecklist(name: new string('n', 150), items: Items(new string('i', 200))), 1, null, CancellationToken.None);
+        var atLimit = await s.Service.CreateAsync(NewChecklist(name: new string('n', 150), appliesTo: "Mold", items: Items(new string('i', 200))), 1, null, CancellationToken.None);
         Assert.Equal(150, atLimit.ChecklistName.Length);
         Assert.Equal(200, atLimit.Items[0].ItemLabel.Length);
     }

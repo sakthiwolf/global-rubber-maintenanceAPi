@@ -189,7 +189,7 @@ public class MachineServiceTests
 
         Assert.Contains("MachineName is required.", ex.Errors);
         Assert.Contains("MachineType is required.", ex.Errors);
-        Assert.Contains("DepartmentId is required.", ex.Errors);
+        Assert.Contains("DepartmentId is not valid.", ex.Errors); // migration 023: optional, but 0 is not a department
         Assert.Contains("Location is required.", ex.Errors);
         Assert.Contains("MaintenanceFrequencyDays is required.", ex.Errors);
         Assert.Contains("Criticality is required.", ex.Errors);

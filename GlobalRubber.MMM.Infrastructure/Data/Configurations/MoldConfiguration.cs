@@ -22,6 +22,10 @@ public class MoldConfiguration : IEntityTypeConfiguration<Mold>
         builder.Property(e => e.SerialNumber).HasColumnName("serial_number").HasMaxLength(100);
         builder.Property(e => e.Location).HasColumnName("location").HasMaxLength(100);
         builder.Property(e => e.StorageLocation).HasColumnName("storage_location").HasMaxLength(100);
+        // Migration 024: F01 fields, all optional.
+        builder.Property(e => e.PartNo).HasColumnName("part_no").HasMaxLength(100);
+        builder.Property(e => e.PartDescription).HasColumnName("part_description").HasMaxLength(250);
+        builder.Property(e => e.Ownership).HasColumnName("ownership").HasMaxLength(100);
         builder.Property(e => e.CommissionDate).HasColumnName("commission_date").HasColumnType("date");
         builder.Property(e => e.MaximumShots).HasColumnName("maximum_shots").IsRequired();
         builder.Property(e => e.WarningShots).HasColumnName("warning_shots").IsRequired();

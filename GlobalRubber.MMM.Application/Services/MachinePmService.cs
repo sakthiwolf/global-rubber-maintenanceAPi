@@ -34,6 +34,7 @@ public sealed class MachinePmService : IMachinePmService
     private readonly IUserRepository _userRepository;
     private readonly IDateTimeProvider _dateTimeProvider;
     private readonly IAuditLogService _auditLogService;
+    private readonly INotificationPublisher _notificationPublisher;
     private readonly ILogger<MachinePmService> _logger;
 
     public MachinePmService(
@@ -41,12 +42,14 @@ public sealed class MachinePmService : IMachinePmService
         IUserRepository userRepository,
         IDateTimeProvider dateTimeProvider,
         IAuditLogService auditLogService,
+        INotificationPublisher notificationPublisher,
         ILogger<MachinePmService> logger)
     {
         _repository = repository;
         _userRepository = userRepository;
         _dateTimeProvider = dateTimeProvider;
         _auditLogService = auditLogService;
+        _notificationPublisher = notificationPublisher;
         _logger = logger;
     }
 
@@ -138,6 +141,7 @@ public sealed class MachinePmService : IMachinePmService
                 successor = IsSuccessorDue(checklist)
                     ? MachinePmOccurrenceFactory.NewOccurrence(
                         checklist!,
+                        checklist!.EffectiveItems(), // the checklist master's CURRENT items (migration 020), else the plan's own
                         RecurrenceRules.NextDueAfterCompletion(checklist!.CycleAnchor(), checklist.Frequency!, pm.ScheduledDate, today),
                         now, actingUserId)
                     : null;
@@ -150,11 +154,20 @@ public sealed class MachinePmService : IMachinePmService
                 var statusBeforeMachine = machine.OperationalStatus;
                 if (machine.MachineId == pm.MachineId)
                 {
-                    machine.LastMaintenanceDate = today;
+                    // Migration 025: a manual (one-time) PM never changes the machine's normal maintenance dates.
+                    if (pm.ScheduleType != PmScheduleType.Manual)
+                    {
+                        machine.LastMaintenanceDate = today;
+                    }
+
                     machine.OperationalStatus = MachinePmRules.OperationalStatusAfterCompletion(machine.OperationalStatus);
                 }
 
-                machine.NextMaintenanceDate = MachinePmRules.NextMaintenanceDateFromOpenOccurrences(openDueDates);
+                // Migration 025: completing a manual (one-time) PM leaves the machine's normal next date as it is.
+                if (pm.ScheduleType != PmScheduleType.Manual)
+                {
+                    machine.NextMaintenanceDate = MachinePmRules.NextMaintenanceDateFromOpenOccurrences(openDueDates);
+                }
                 if (lastBefore != machine.LastMaintenanceDate || nextBefore != machine.NextMaintenanceDate || statusBeforeMachine != machine.OperationalStatus)
                 {
                     machine.UpdatedAt = now;
@@ -260,6 +273,9 @@ public sealed class MachinePmService : IMachinePmService
             actor => $"{actor} scheduled machine PM {successor.PmNo} for machine {code} on {Date(successor.ScheduledDate)} " +
                      $"as the next occurrence after {completed.PmNo} ({successor.ChecklistItems.Count} items).",
             details, cancellationToken);
+
+        // Migration 021: after the completion has committed, like the audit.
+        await MachinePmNotifications.ScheduledAsync(_notificationPublisher, successor.MachinePmId, successor.PmNo, code, successor.ScheduledDate, actingUserId, cancellationToken);
     }
 
     private async Task WriteAuditAsync(
@@ -301,6 +317,8 @@ public sealed class MachinePmService : IMachinePmService
         MaintenanceBy = pm.MaintenanceBy,
         Remarks = pm.Remarks,
         Status = pm.Status,
+        ScheduleType = pm.ScheduleType,
+        Title = pm.Title,
         IsOverdue = pm.Status != MachinePmStatus.Completed && pm.ScheduledDate < _dateTimeProvider.Today, // plant (IST) date
         ChecklistItems = pm.ChecklistItems
             .OrderBy(i => i.SortOrder).ThenBy(i => i.MachinePmChecklistId)

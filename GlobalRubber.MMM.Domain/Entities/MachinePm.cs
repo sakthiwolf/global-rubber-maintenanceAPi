@@ -26,6 +26,12 @@ public class MachinePm : AuditableEntity
     public string? MaintenanceBy { get; set; }
     public string Status { get; set; } = MachinePmStatus.Scheduled;
 
+    /// <summary>Migration 025: Automatic (a plan occurrence) or Manual (one-time, see <see cref="PmScheduleType"/>).</summary>
+    public string ScheduleType { get; set; } = PmScheduleType.Automatic;
+
+    /// <summary>Migration 025: the reason / name of a manual PM (required for Manual, null for Automatic).</summary>
+    public string? Title { get; set; }
+
     public Machine Machine { get; set; } = null!;
     public MaintenanceType? MaintenanceType { get; set; }
     public Employee? Engineer { get; set; }

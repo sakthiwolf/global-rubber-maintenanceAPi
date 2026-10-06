@@ -29,7 +29,7 @@ public class MachinePmServiceTests
         var repo = new InMemoryMachinePmRepository(data);
         var audit = new RecordingAuditLog();
         var clock = new SettableClock(today);
-        return new Sut(new MachinePmService(repo, users, clock, auditOverride ?? audit, NullLogger<MachinePmService>.Instance), repo, data, audit, clock, users);
+        return new Sut(new MachinePmService(repo, users, clock, auditOverride ?? audit, new RecordingNotificationPublisher(), NullLogger<MachinePmService>.Instance), repo, data, audit, clock, users);
     }
 
     private static CompleteMachinePmRequest Done(MachinePm pm, string? by = "Ravi", string? remarks = null, params (int Line, bool Checked)[] ticks) =>
@@ -293,6 +293,32 @@ public class MachinePmServiceTests
         Assert.Equal(history, string.Join("|", s.Repo.Stored(pm.MachinePmId).ChecklistItems.Select(l => $"{l.MachinePmChecklistId}:{l.ItemLabel}:{l.IsChecked}")));
         Assert.Equal(3, s.Data.Pms.Count); // 25 completed, 26 completed, 27 scheduled
         Assert.Equal(D(2026, 9, 27), Successor(s, c).ScheduledDate);
+    }
+
+    [Fact] // migration 020
+    public async Task APlanWithAChecklistMaster_ItsSuccessorCopiesTheMastersCURRENTItems_NotThePlans()
+    {
+        var data = new MachinePmScenario();
+        var master = new MaintenanceChecklist
+        {
+            ChecklistId = 900, ChecklistCode = "CHK-0900", ChecklistName = "Weekly Machine Maintenance", AppliesTo = "Machine", IsActive = true, RowVersion = new byte[] { 1 },
+            Items = new() { new() { ChecklistItemId = 9001, ChecklistId = 900, SortOrder = 1, ItemLabel = "Oil level checked" } },
+        };
+        var c = data.Checklist("Daily", D(2026, 9, 25));
+        c.Items.Clear(); // a plan with a master has no items of its own
+        c.SourceChecklistId = master.ChecklistId;
+        c.SourceChecklist = master;
+        var pm = data.Open(c, D(2026, 9, 25));
+        // The master is edited after the open PM was generated: the open PM keeps its snapshot, the successor gets the new items.
+        master.Items.Add(new MaintenanceChecklistItem { ChecklistItemId = 9002, ChecklistId = 900, SortOrder = 2, ItemLabel = "Belt condition checked" });
+        var s = Create(data, D(2026, 9, 25));
+
+        await Complete(s, pm);
+
+        var successor = Successor(s, c);
+        Assert.Equal(new[] { "Oil level checked", "Belt condition checked" }, successor.ChecklistItems.Select(l => l.ItemLabel));
+        Assert.Equal(new int?[] { 9001, 9002 }, successor.ChecklistItems.Select(l => l.ChecklistItemId)); // the master's item ids
+        Assert.Equal((int?)c.ChecklistId, successor.ChecklistId);                                     // still the PLAN's occurrence
     }
 
     [Fact]
@@ -571,7 +597,7 @@ public class MachinePmServiceTests
 
         var ex = await Assert.ThrowsAsync<ValidationException>(() => s.Service.GetAllAsync(new MachinePmListQuery { Bucket = bucket }, CancellationToken.None));
 
-        Assert.Contains("Bucket must be one of: daily, weekly, monthly, yearly, completed.", ex.Errors);
+        Assert.Contains("Bucket must be one of: daily, weekly, monthly, yearly, one-time, completed.", ex.Errors);
     }
 
     // ---------------------------------------------------------------- the successor is hidden until its date (items 1-8, 13, 14)

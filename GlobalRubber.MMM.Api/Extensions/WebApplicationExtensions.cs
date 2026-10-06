@@ -1,5 +1,6 @@
 using GlobalRubber.MMM.Api.Configuration;
 using GlobalRubber.MMM.Api.HealthChecks;
+using GlobalRubber.MMM.Api.Realtime;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
@@ -36,7 +37,11 @@ public static class WebApplicationExtensions
         app.UseAuthentication();
         app.UseAuthorization();
 
+        // After the endpoint has run: pushes the realtime notification signal recorded by a successful request.
+        app.UseMiddleware<NotificationSignalMiddleware>();
+
         app.MapControllers();
+        app.MapHub<NotificationHub>(NotificationHub.Path);
 
         app.MapHealthEndpoints();
 

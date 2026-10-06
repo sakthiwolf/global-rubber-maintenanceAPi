@@ -34,7 +34,11 @@ public sealed class MachineRepository : IMachineRepository
             query = query.Where(m => m.IsActive == isActive);
         }
 
-        if (request.DepartmentId is { } departmentId)
+        if (request.NoDepartment == true)
+        {
+            query = query.Where(m => m.DepartmentId == null); // migration 023: machines without a department
+        }
+        else if (request.DepartmentId is { } departmentId)
         {
             query = query.Where(m => m.DepartmentId == departmentId);
         }
@@ -149,6 +153,9 @@ public sealed class MachineRepository : IMachineRepository
             SerialNumber = machine.SerialNumber,
             Capacity = machine.Capacity,
             InstallationDate = machine.InstallationDate,
+            MachineRange = machine.MachineRange,
+            Ownership = machine.Ownership,
+            PurchaseDate = machine.PurchaseDate,
             MaintenanceFrequencyDays = machine.MaintenanceFrequencyDays,
             Criticality = machine.Criticality,
             Remarks = machine.Remarks,
@@ -166,6 +173,9 @@ public sealed class MachineRepository : IMachineRepository
         entry.Property(m => m.SerialNumber).IsModified = true;
         entry.Property(m => m.Capacity).IsModified = true;
         entry.Property(m => m.InstallationDate).IsModified = true;
+        entry.Property(m => m.MachineRange).IsModified = true;   // migration 022
+        entry.Property(m => m.Ownership).IsModified = true;
+        entry.Property(m => m.PurchaseDate).IsModified = true;
         entry.Property(m => m.MaintenanceFrequencyDays).IsModified = true;
         // Responsible Engineer temporarily disabled. Database field and relationship intentionally retained for future re-enablement.
         // responsible_engineer_id is deliberately NOT marked modified, so an update never overwrites or clears it.

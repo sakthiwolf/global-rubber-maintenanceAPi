@@ -37,8 +37,8 @@ public class MachineBreakdownServiceTests
             new BreakdownType { BreakdownTypeId = 1, BreakdownTypeCode = "BT-0001", BreakdownTypeName = "Electrical", IsActive = true },
             new BreakdownType { BreakdownTypeId = 2, BreakdownTypeCode = "BT-0002", BreakdownTypeName = "Retired", IsActive = false });
         var service = new MachineBreakdownService(
-            breakdowns, machines, breakdownTypes, users, new FixedClock(),
-            auditOverride ?? audit, NullLogger<MachineBreakdownService>.Instance);
+            breakdowns, machines, breakdownTypes, employees, users, new FixedClock(),
+            auditOverride ?? audit, new RecordingNotificationPublisher(), NullLogger<MachineBreakdownService>.Instance);
         return new Sut(service, breakdowns, audit);
     }
 

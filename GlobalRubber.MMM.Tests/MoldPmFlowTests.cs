@@ -332,6 +332,7 @@ public class MoldPmFlowTests
         public Task<MoldPm> AddAutomaticPmAsync(MoldPm pm, CancellationToken c) => throw new InvalidOperationException("No active sequence is configured for MOLD_PM.");
         public Task<MoldPm> StartAsync(MoldPm pm, byte[] rv, Action<Mold> a, CancellationToken c) => _inner.StartAsync(pm, rv, a, c);
         public Task<MoldPm> CompleteAsync(MoldPm pm, byte[] rv, Action<Mold> a, Func<Mold, CancellationToken, Task> s, CancellationToken c) => _inner.CompleteAsync(pm, rv, a, s, c);
+        public Task<MoldPm> AddManualAsync(MoldPm pm, CancellationToken c) => _inner.AddManualAsync(pm, c);
     }
 
     [Fact]

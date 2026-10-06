@@ -28,4 +28,10 @@ public interface IMachinePmRepository
     /// </summary>
     /// <exception cref="GlobalRubber.MMM.Application.Common.ConflictException">The PM's row version no longer matches, or a successor already exists.</exception>
     Task<MachinePm> CompleteAsync(MachinePm pm, byte[] originalRowVersion, MachinePmCompletionPlan plan, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Migration 025: inserts ONE manual PM with its checklist snapshot and issues its number from the MACHINE_PM sequence,
+    /// in one transaction. Nothing else is written - no successor, no machine date.
+    /// </summary>
+    Task<MachinePm> AddManualAsync(MachinePm pm, CancellationToken cancellationToken);
 }

@@ -10,7 +10,7 @@ public sealed class MaintenanceChecklistDto
     /// <summary>Machine / Mold.</summary>
     public string AppliesTo { get; init; } = string.Empty;
 
-    /// <summary>Daily / Weekly / Monthly / Yearly; null only on an inactive legacy checklist.</summary>
+    /// <summary>Daily / Weekly / Monthly / Yearly; always set on a plan, null on a Checklist Master.</summary>
     public string? Frequency { get; init; }
 
     /// <summary>The machine a Machine checklist belongs to (null for Mold, and on an inactive legacy checklist).</summary>
@@ -32,9 +32,25 @@ public sealed class MaintenanceChecklistDto
     /// <summary>False when the chosen type has been deactivated since (the UI shows it as "(not active)").</summary>
     public bool? MaintenanceTypeIsActive { get; init; }
 
+    /// <summary>
+    /// Migration 020: true for a reusable Checklist Master (no plan configuration), false for a preventive maintenance plan.
+    /// </summary>
+    public bool IsChecklistMaster { get; init; }
+
+    /// <summary>The Checklist Master a Machine plan uses (migration 020); null on masters, Mold plans and older plans.</summary>
+    public int? SourceChecklistId { get; init; }
+    public string? SourceChecklistCode { get; init; }
+    public string? SourceChecklistName { get; init; }
+
+    /// <summary>False when the plan's Checklist Master has been deactivated since (the UI shows it as "(inactive)").</summary>
+    public bool? SourceChecklistIsActive { get; init; }
+
     public bool IsActive { get; init; }
 
-    /// <summary>The checklist's items in sort order (masters.maintenance_checklist_item_master).</summary>
+    /// <summary>
+    /// The items in sort order (masters.maintenance_checklist_item_master): for a plan with a Checklist Master, the MASTER's
+    /// items (read-only from the plan) - the plan has none of its own; otherwise the checklist's own items.
+    /// </summary>
     public IReadOnlyList<MaintenanceChecklistItemDto> Items { get; init; } = Array.Empty<MaintenanceChecklistItemDto>();
 
     public DateTime CreatedAt { get; init; }

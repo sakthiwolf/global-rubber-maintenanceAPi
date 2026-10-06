@@ -186,7 +186,7 @@ public class MachineEndpointTests : IClassFixture<ApiWebApplicationFactory>
         var errors = Errors(await Root(invalid));
         Assert.Contains("MachineName is required.", errors);
         Assert.Contains("MachineType is required.", errors);
-        Assert.Contains("DepartmentId is required.", errors);
+        Assert.Contains("DepartmentId is not valid.", errors); // migration 023: optional, but 0 is not a department
         Assert.Contains("Location is required.", errors);
         Assert.Contains("MaintenanceFrequencyDays must be greater than 0.", errors);
         Assert.Contains("Criticality must be one of: Low, Medium, High.", errors);
@@ -399,5 +399,33 @@ public class MachineEndpointTests : IClassFixture<ApiWebApplicationFactory>
         Assert.Equal(HttpStatusCode.Forbidden, (await h.Client.GetAsync("/api/v1/machines")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await h.Client.PostAsync("/api/v1/machines", Json(CreateBody()))).StatusCode);
         Assert.Equal(3, h.Machines.Count);
+    }
+
+    // ================================================================ F01 fields (migration 022)
+
+    [Fact]
+    public async Task F01Fields_RoundTripThroughPostGetAndPut_WithCamelCaseNames_AndIsoDates()
+    {
+        var h = CreateHarness();
+        var body = JsonSerializer.Serialize(new
+        {
+            machineName = "Hydraulic Moulding", machineType = "Hydraulic Moulding", departmentId = 2, location = "Shop Floor 2",
+            manufacturer = "Technocrat", capacity = "450 Ton", installationDate = (string?)null, maintenanceFrequencyDays = 30, criticality = "High",
+            machineRange = "40/40 Inches", ownership = "GRP", purchaseDate = "2008-01-01",
+        });
+
+        var created = await h.Client.PostAsync("/api/v1/machines", Json(body));
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var data = (await Root(created)).GetProperty("data");
+        Assert.Equal(("40/40 Inches", "GRP", "2008-01-01"), (data.GetProperty("machineRange").GetString(), data.GetProperty("ownership").GetString(), data.GetProperty("purchaseDate").GetString()));
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("installationDate").ValueKind); // purchase date never fills the installation date
+
+        var id = data.GetProperty("machineId").GetInt32();
+        var got = (await Root(await h.Client.GetAsync($"/api/v1/machines/{id}"))).GetProperty("data");
+        Assert.Equal("2008-01-01", got.GetProperty("purchaseDate").GetString());
+
+        var existing = (await Root(await h.Client.GetAsync("/api/v1/machines/1"))).GetProperty("data");
+        Assert.Equal(JsonValueKind.Null, existing.GetProperty("machineRange").ValueKind);
+        Assert.Equal(JsonValueKind.Null, existing.GetProperty("purchaseDate").ValueKind);
     }
 }

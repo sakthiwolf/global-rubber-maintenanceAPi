@@ -13,8 +13,10 @@ namespace GlobalRubber.MMM.Api.Controllers;
 ///   GET  /api/v1/machine-breakdowns/{id}    - one breakdown
 ///   POST /api/v1/machine-breakdowns         - report a new breakdown (stage = Reported)
 ///   PUT  /api/v1/machine-breakdowns/{id}/advance-stage  - advance to the next stage
+///   PUT  /api/v1/machine-breakdowns/{id}/reopen         - reopen a Closed breakdown (back to Resolved)
 ///
-/// All reads require View, creates require Add, stage advances require Edit.
+/// All reads require View, creates require Add, stage advances require Edit, reopening requires Approve (a supervisory
+/// correction - the seeded ADMIN and MAINT_MANAGER roles hold it, engineers do not).
 /// No role-name checks; permissions are evaluated by [RequirePermission].
 /// </summary>
 [Route("api/v1/machine-breakdowns")]
@@ -105,5 +107,28 @@ public sealed class MachineBreakdownController : BaseApiController
             cancellationToken);
 
         return Ok(ApiResponse<MachineBreakdownDto>.Ok(updated, $"Breakdown moved to \"{updated.Stage}\"."));
+    }
+
+    /// <summary>
+    /// Reopens a Closed breakdown back to Resolved (the same record and number; ClosedAt cleared; audited). Requires the
+    /// rowVersion from the last read. 409 when the breakdown is not Closed or was modified since.
+    /// </summary>
+    [HttpPut("{id:int}/reopen")]
+    [RequirePermission(ModuleCodes.TrnMachineBreakdown, PermissionAction.Approve)]
+    [ProducesResponseType(typeof(ApiResponse<MachineBreakdownDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ApiResponse<MachineBreakdownDto>>> Reopen(
+        int id, [FromBody] ReopenMachineBreakdownRequest request, CancellationToken cancellationToken)
+    {
+        var updated = await _service.ReopenAsync(
+            id, request, GetAuthenticatedUserId(),
+            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            cancellationToken);
+
+        return Ok(ApiResponse<MachineBreakdownDto>.Ok(updated, $"Breakdown {updated.BreakdownNo} reopened."));
     }
 }

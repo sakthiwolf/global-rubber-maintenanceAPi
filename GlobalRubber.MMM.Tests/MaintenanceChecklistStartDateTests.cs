@@ -31,10 +31,10 @@ public class MaintenanceChecklistStartDateTests
             MachinePmId = n, PmNo = $"MPM-{n:0000}", MachineId = 1, ChecklistId = 3, ScheduledDate = D(2026, 2, 20),
             CompletedDate = n < 6 ? D(2026, 2, 20) : null, Status = n < 6 ? MachinePmStatus.Completed : MachinePmStatus.Scheduled, RowVersion = new byte[] { 1 },
         }).ToList();
-        var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList, pms);
+        var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.All(), machineList, pms);
         var audit = new RecordingAuditLog();
         var clock = new SettableClock(today ?? D(2026, 9, 25));
-        var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()), users, clock, audit, NullLogger<MaintenanceChecklistService>.Instance);
+        var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()), users, clock, audit, new RecordingNotificationPublisher(), NullLogger<MaintenanceChecklistService>.Instance);
         return new Sut(service, repo, audit, clock);
     }
 
@@ -42,7 +42,11 @@ public class MaintenanceChecklistStartDateTests
     {
         ChecklistName = $"Press {frequency}", AppliesTo = appliesTo, Frequency = frequency, MachineId = appliesTo == "Mold" ? null : machineId,
         StartDate = noStart ? null : startDate ?? D(2026, 9, 25),
-        Items = new[] { "Oil level checked", "Safety guard checked" }.Select(l => new MaintenanceChecklistItemRequest { ItemLabel = l }).ToList(),
+        // Migration 020: a Machine plan uses Checklist Master 901; a Mold plan keeps its own items.
+        SourceChecklistId = appliesTo == "Mold" ? null : MaintenanceChecklistTestData.DefaultMasterId,
+        Items = appliesTo == "Mold"
+            ? new[] { "Oil level checked", "Safety guard checked" }.Select(l => new MaintenanceChecklistItemRequest { ItemLabel = l }).ToList()
+            : null,
     };
 
     private static UpdateMaintenanceChecklistRequest Edit(Sut s, int id, string? frequency = null, DateOnly? startDate = null, string? appliesTo = null, int? machineId = -1, bool clearStart = false)
@@ -54,7 +58,10 @@ public class MaintenanceChecklistStartDateTests
             ChecklistName = c.ChecklistName, AppliesTo = applies, Frequency = frequency ?? c.Frequency,
             MachineId = machineId == -1 ? (applies == "Mold" ? null : c.MachineId) : machineId,
             StartDate = clearStart ? null : startDate ?? c.StartDate,
-            Items = c.Items.OrderBy(i => i.SortOrder).Select(i => new MaintenanceChecklistItemRequest { ItemLabel = i.ItemLabel }).ToList(),
+            SourceChecklistId = applies == "Mold" ? null : c.SourceChecklistId ?? (c.AppliesTo == "Mold" ? MaintenanceChecklistTestData.DefaultMasterId : null),
+            Items = applies == "Mold" ? s.Repo.EffectiveLabels(id).Select(l => new MaintenanceChecklistItemRequest { ItemLabel = l }).ToList()
+                : c.AppliesTo == "Machine" && c.SourceChecklistId is null ? c.Items.OrderBy(i => i.SortOrder).Select(i => new MaintenanceChecklistItemRequest { ItemLabel = i.ItemLabel }).ToList()
+                : null,
             RowVersion = Convert.ToBase64String(c.RowVersion),
         };
     }
@@ -81,7 +88,7 @@ public class MaintenanceChecklistStartDateTests
         Assert.Null(pm.MaintenanceBy);
         Assert.Null(pm.CompletedDate);
         Assert.Null(pm.Remarks);
-        Assert.Equal(new[] { "Oil level checked", "Safety guard checked" }, pm.ChecklistItems.Select(i => i.ItemLabel));
+        Assert.Equal(new[] { "Hoses checked", "Pressure recorded" }, pm.ChecklistItems.Select(i => i.ItemLabel)); // Checklist Master 901's items
         Assert.Equal(D(2026, 10, 3), dto.StartDate);
         Assert.Equal(D(2026, 10, 3), s.Repo.Stored(dto.ChecklistId).StartDate);
         Assert.Equal(D(2026, 10, 3), s.Repo.StoredMachine(2).NextMaintenanceDate); // its only open occurrence

@@ -38,8 +38,16 @@ public class CreateMaintenanceChecklistRequest
     public int? MaintenanceTypeId { get; init; }
 
     /// <summary>
+    /// Migration 020. Machine plans: the ACTIVE Checklist Master (applies to Machine, at least one item) whose items the
+    /// plan's PM occurrences use - required, except when editing a plan created before migration 020 that has none yet
+    /// (it keeps its own items until one is chosen). Mold plans: must be empty.
+    /// </summary>
+    public int? SourceChecklistId { get; init; }
+
+    /// <summary>
     /// The items in the order they should appear; blank rows are dropped (analysis 4.10) and sort_order is assigned from
-    /// the position of the remaining ones (1, 2, 3...), so the order cannot be inconsistent.
+    /// the position of the remaining ones (1, 2, 3...), so the order cannot be inconsistent. Must be empty when a
+    /// Checklist Master is selected - the plan then has no items of its own (migration 020).
     /// </summary>
     public IReadOnlyList<MaintenanceChecklistItemRequest>? Items { get; init; }
 }

@@ -77,7 +77,7 @@ public sealed class MaintenanceReportRepository : IMaintenanceReportRepository
             .ToListAsync(cancellationToken);
 
         var plans = await _dbContext.MaintenanceChecklists.AsNoTracking()
-            .Where(c => c.AppliesTo == MaintenanceChecklistAppliesTo.Machine)
+            .Where(c => c.AppliesTo == MaintenanceChecklistAppliesTo.Machine && c.Frequency != null) // plans only, never checklist masters (migration 020)
             .OrderBy(c => c.ChecklistCode)
             .Select(c => new ReportLookupItemDto { Id = c.ChecklistId, Code = c.ChecklistCode, Name = c.ChecklistName, IsActive = c.IsActive })
             .ToListAsync(cancellationToken);

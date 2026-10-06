@@ -23,7 +23,7 @@ public sealed class MaintenanceChecklistController : BaseApiController
         _checklistService = checklistService;
     }
 
-    /// <summary>Returns a paged list of checklists (with items), optionally filtered by search text (code/name), applies-to and active status.</summary>
+    /// <summary>Returns a paged list of preventive maintenance plans (with items; never the Checklist Masters), optionally filtered by search text (code/name), applies-to and active status.</summary>
     [HttpGet]
     [RequirePermission(ModuleCodes.MasterMaintenanceChecklist, PermissionAction.View)]
     [ProducesResponseType(typeof(ApiResponse<PagedResult<MaintenanceChecklistDto>>), StatusCodes.Status200OK)]
@@ -51,6 +51,83 @@ public sealed class MaintenanceChecklistController : BaseApiController
         var lookups = await _checklistService.GetLookupsAsync(cancellationToken);
 
         return Ok(ApiResponse<MaintenanceChecklistLookupsDto>.Ok(lookups, "Checklist lookups retrieved successfully."));
+    }
+
+    /// <summary>
+    /// Returns a paged list of the reusable Checklist Masters (migration 020: checklists without plan configuration), with
+    /// their items, optionally filtered by search text, applies-to and active status.
+    /// </summary>
+    [HttpGet("masters")]
+    [RequirePermission(ModuleCodes.MasterMaintenanceChecklist, PermissionAction.View)]
+    [ProducesResponseType(typeof(ApiResponse<PagedResult<MaintenanceChecklistDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ApiResponse<PagedResult<MaintenanceChecklistDto>>>> GetChecklistMasters(
+        [FromQuery] MaintenanceChecklistListQuery query, CancellationToken cancellationToken)
+    {
+        var result = await _checklistService.GetChecklistMastersAsync(query, cancellationToken);
+
+        return Ok(ApiResponse<PagedResult<MaintenanceChecklistDto>>.Ok(result, "Checklist masters retrieved successfully."));
+    }
+
+    /// <summary>
+    /// The plan form's "Checklist Master" dropdown: the ACTIVE Checklist Masters that apply to <paramref name="appliesTo"/>
+    /// (Machine when omitted), each with its items. 400 for an unknown applies-to.
+    /// </summary>
+    [HttpGet("masters/options")]
+    [RequirePermission(ModuleCodes.MasterMaintenanceChecklist, PermissionAction.View)]
+    [ProducesResponseType(typeof(ApiResponse<IReadOnlyList<ChecklistMasterOptionDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<ChecklistMasterOptionDto>>>> GetChecklistMasterOptions(
+        [FromQuery] string? appliesTo, CancellationToken cancellationToken)
+    {
+        var options = await _checklistService.GetChecklistMasterOptionsAsync(appliesTo, cancellationToken);
+
+        return Ok(ApiResponse<IReadOnlyList<ChecklistMasterOptionDto>>.Ok(options, "Checklist masters retrieved successfully."));
+    }
+
+    /// <summary>
+    /// Creates an active Checklist Master (name, applies-to, at least one item) with a code from the MAINTENANCE_CHECKLIST
+    /// sequence. It schedules nothing. 400 for an invalid field; 409 if another active checklist has the same name.
+    /// </summary>
+    [HttpPost("masters")]
+    [RequirePermission(ModuleCodes.MasterMaintenanceChecklist, PermissionAction.Add)]
+    [ProducesResponseType(typeof(ApiResponse<MaintenanceChecklistDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ApiResponse<MaintenanceChecklistDto>>> CreateChecklistMaster(
+        [FromBody] CreateChecklistMasterRequest request, CancellationToken cancellationToken)
+    {
+        var master = await _checklistService.CreateChecklistMasterAsync(
+            request, GetAuthenticatedUserId(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+
+        return CreatedAtAction(nameof(GetById), new { id = master.ChecklistId }, ApiResponse<MaintenanceChecklistDto>.Ok(master, "Checklist master created successfully."));
+    }
+
+    /// <summary>
+    /// Updates a Checklist Master's name, applies-to and items (replaced as a set). Requires the rowVersion from the last read.
+    /// 400 for an invalid field or a plan id; 409 for a stale row version, a duplicate name, or an Applies To change while
+    /// plans use it.
+    /// </summary>
+    [HttpPut("masters/{id:int}")]
+    [RequirePermission(ModuleCodes.MasterMaintenanceChecklist, PermissionAction.Edit)]
+    [ProducesResponseType(typeof(ApiResponse<MaintenanceChecklistDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ApiResponse<MaintenanceChecklistDto>>> UpdateChecklistMaster(
+        int id, [FromBody] UpdateChecklistMasterRequest request, CancellationToken cancellationToken)
+    {
+        var master = await _checklistService.UpdateChecklistMasterAsync(
+            id, request, GetAuthenticatedUserId(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+
+        return Ok(ApiResponse<MaintenanceChecklistDto>.Ok(master, "Checklist master updated successfully."));
     }
 
     /// <summary>Returns one checklist with its items by id, including the rowVersion needed to update it. 404 if it does not exist.</summary>

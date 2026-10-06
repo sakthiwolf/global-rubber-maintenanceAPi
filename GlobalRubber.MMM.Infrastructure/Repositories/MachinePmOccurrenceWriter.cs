@@ -46,10 +46,14 @@ internal sealed class MachinePmOccurrenceWriter
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    /// <summary>Due dates of the machine's open occurrences (Scheduled / In Progress), as seen inside the transaction.</summary>
+    /// <summary>
+    /// Due dates of the machine's open AUTOMATIC occurrences (Scheduled / In Progress), as seen inside the transaction. A
+    /// manual (one-time) PM is excluded (migration 025): it never moves the machine's normal next maintenance date.
+    /// </summary>
     public async Task<IReadOnlyList<DateOnly>> OpenDueDatesAsync(int machineId, CancellationToken cancellationToken) =>
         await _dbContext.MachinePms.AsNoTracking()
-            .Where(p => p.MachineId == machineId && (p.Status == MachinePmStatus.Scheduled || p.Status == MachinePmStatus.InProgress))
+            .Where(p => p.MachineId == machineId && p.ScheduleType == PmScheduleType.Automatic
+                        && (p.Status == MachinePmStatus.Scheduled || p.Status == MachinePmStatus.InProgress))
             .OrderBy(p => p.ScheduledDate)
             .Select(p => p.ScheduledDate)
             .ToListAsync(cancellationToken);

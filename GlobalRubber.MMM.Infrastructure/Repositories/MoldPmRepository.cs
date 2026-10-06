@@ -27,7 +27,9 @@ public sealed class MoldPmRepository : IMoldPmRepository
     {
         var query = request.Bucket switch
         {
-            MoldPmBucket.Due => Filtered(request).Where(p => p.Status == MoldPmStatus.Scheduled && p.ScheduledDate >= today),
+            // Due = due TODAY. The automatic PM's date is never in the future, so this is what ">= today" always meant for
+            // it; a future MANUAL PM (migration 025) waits until its date, like a future machine PM.
+            MoldPmBucket.Due => Filtered(request).Where(p => p.Status == MoldPmStatus.Scheduled && p.ScheduledDate == today),
             MoldPmBucket.Overdue => Filtered(request).Where(p => p.Status == MoldPmStatus.Scheduled && p.ScheduledDate < today),
             MoldPmBucket.InProgress => Filtered(request).Where(p => p.Status == MoldPmStatus.InProgress),
             MoldPmBucket.Completed => Filtered(request).Where(p => p.Status == MoldPmStatus.Completed),
@@ -44,6 +46,7 @@ public sealed class MoldPmRepository : IMoldPmRepository
             .Skip((request.PageNumber - 1) * request.PageSize)
             .Take(request.PageSize)
             .Include(p => p.Mold)
+            .Include(p => p.ChecklistItems.OrderBy(i => i.SortOrder).ThenBy(i => i.MoldPmChecklistId))
             .ToListAsync(cancellationToken);
 
         return (items, totalCount);
@@ -55,7 +58,7 @@ public sealed class MoldPmRepository : IMoldPmRepository
             .GroupBy(_ => 1)
             .Select(g => new MoldPmCountsDto
             {
-                Due = g.Count(p => p.Status == MoldPmStatus.Scheduled && p.ScheduledDate >= today),
+                Due = g.Count(p => p.Status == MoldPmStatus.Scheduled && p.ScheduledDate == today),
                 Overdue = g.Count(p => p.Status == MoldPmStatus.Scheduled && p.ScheduledDate < today),
                 InProgress = g.Count(p => p.Status == MoldPmStatus.InProgress),
                 Completed = g.Count(p => p.Status == MoldPmStatus.Completed),
@@ -66,7 +69,10 @@ public sealed class MoldPmRepository : IMoldPmRepository
     }
 
     public Task<MoldPm?> GetByIdAsync(int moldPmId, CancellationToken cancellationToken) =>
-        _dbContext.MoldPms.AsNoTracking().Include(p => p.Mold).FirstOrDefaultAsync(p => p.MoldPmId == moldPmId, cancellationToken);
+        _dbContext.MoldPms.AsNoTracking()
+            .Include(p => p.Mold)
+            .Include(p => p.ChecklistItems.OrderBy(i => i.SortOrder).ThenBy(i => i.MoldPmChecklistId))
+            .FirstOrDefaultAsync(p => p.MoldPmId == moldPmId, cancellationToken);
 
     public async Task<IReadOnlyList<MoldUsageSnapshot>> GetMoldUsageAsync(CancellationToken cancellationToken)
     {
@@ -137,7 +143,69 @@ public sealed class MoldPmRepository : IMoldPmRepository
             {
                 nameof(MoldPm.Status), nameof(MoldPm.CompletedDate), nameof(MoldPm.MaintenanceBy), nameof(MoldPm.Remarks),
                 nameof(MoldPm.UsageAtCompletion), nameof(MoldPm.UpdatedAt), nameof(MoldPm.UpdatedBy),
-            }, cancellationToken);
+            }, cancellationToken, pm.ChecklistItems); // a manual PM's ticks (migration 025); none for the automatic PM
+    }
+
+    public async Task<MoldPm> AddManualAsync(MoldPm pm, CancellationToken cancellationToken)
+    {
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+        var lines = pm.ChecklistItems.ToList();
+        Mold? mold = null;
+
+        try
+        {
+            await strategy.ExecuteAsync(async () =>
+            {
+                Detach(); // a retry starts clean
+                pm.MoldPmId = 0;
+                pm.ChecklistItems = lines.Select(l => new MoldPmChecklistItem
+                {
+                    SortOrder = l.SortOrder, ItemLabel = l.ItemLabel, ChecklistItemId = l.ChecklistItemId, IsChecked = false,
+                }).ToList();
+
+                var ownsTransaction = _dbContext.Database.CurrentTransaction is null;
+                await using var transaction = ownsTransaction ? await _dbContext.Database.BeginTransactionAsync(cancellationToken) : null;
+
+                // The same lock Production Entry takes: the usage recorded on the PM is the mold's committed usage now.
+                foreach (var tracked in _dbContext.ChangeTracker.Entries<Mold>().Where(e => e.Entity.MoldId == pm.MoldId).ToList())
+                {
+                    tracked.State = EntityState.Detached;
+                }
+
+                mold = await _dbContext.Molds
+                    .FromSqlInterpolated($"SELECT * FROM masters.mold_master WITH (UPDLOCK, ROWLOCK) WHERE mold_id = {pm.MoldId}")
+                    .AsNoTracking()
+                    .SingleOrDefaultAsync(cancellationToken)
+                    ?? throw new NotFoundException(nameof(Mold), pm.MoldId);
+
+                pm.MoldUsageAtService = mold.CurrentUsageShots;
+                pm.PmNo = await _documentSequence.NextCodeAsync(DocumentTypes.MoldPm, cancellationToken);
+                _dbContext.MoldPms.Add(pm); // the snapshot lines go in with it
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                if (transaction is not null)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                }
+            });
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is SqlException { Number: 2601 or 2627 })
+        {
+            throw new ConflictException("The maintenance number could not be issued because it already exists. Please try again.");
+        }
+        finally
+        {
+            Detach();
+        }
+
+        pm.Mold = mold!;
+        return pm;
+
+        void Detach()
+        {
+            _dbContext.Entry(pm).State = EntityState.Detached;
+            foreach (var line in pm.ChecklistItems) _dbContext.Entry(line).State = EntityState.Detached;
+        }
     }
 
     // One transaction: 1. lock the mold row (UPDLOCK - the same lock Production Entry takes, one lock order: mold, then PM);
@@ -145,13 +213,14 @@ public sealed class MoldPmRepository : IMoldPmRepository
     // ORIGINAL value in the UPDATE's WHERE clause (stale -> 409, nothing committed); 4. afterSave (evaluation); commit.
     private async Task<MoldPm> UpdateWithLockedMoldAsync(
         MoldPm pm, byte[] originalRowVersion, Action<Mold> applyToLockedMold, Func<Mold, CancellationToken, Task>? afterSave,
-        IReadOnlyList<string> pmColumns, CancellationToken cancellationToken)
+        IReadOnlyList<string> pmColumns, CancellationToken cancellationToken, IReadOnlyList<MoldPmChecklistItem>? checklistLines = null)
     {
         // The DbContext is configured with EnableRetryOnFailure, so a transaction we start ourselves must run inside
         // the execution strategy. If the caller already has a transaction open (a verification harness), join it.
         var strategy = _dbContext.Database.CreateExecutionStrategy();
         Mold? mold = null;
         MoldPm? header = null;
+        List<MoldPmChecklistItem> lines = new();
         byte[] newRowVersion = Array.Empty<byte>();
 
         try
@@ -193,6 +262,15 @@ public sealed class MoldPmRepository : IMoldPmRepository
                     entry.Property(property).IsModified = true;
                 }
 
+                // Migration 025: only is_checked of the PM's own snapshot lines (guarded by the header's row version).
+                lines = (checklistLines ?? Array.Empty<MoldPmChecklistItem>())
+                    .Select(i => new MoldPmChecklistItem { MoldPmChecklistId = i.MoldPmChecklistId, MoldPmId = pm.MoldPmId, IsChecked = i.IsChecked })
+                    .ToList();
+                foreach (var line in lines)
+                {
+                    _dbContext.Attach(line).Property(l => l.IsChecked).IsModified = true;
+                }
+
                 try
                 {
                     await _dbContext.SaveChangesAsync(cancellationToken); // UPDATE PM (row version guarded) + UPDATE mold
@@ -228,6 +306,7 @@ public sealed class MoldPmRepository : IMoldPmRepository
         {
             if (header is not null) _dbContext.Entry(header).State = EntityState.Detached;
             if (mold is not null) _dbContext.Entry(mold).State = EntityState.Detached;
+            foreach (var line in lines) _dbContext.Entry(line).State = EntityState.Detached;
         }
     }
 
@@ -246,7 +325,8 @@ public sealed class MoldPmRepository : IMoldPmRepository
             var lowered = search.ToLower();
             query = query.Where(p => p.PmNo.ToLower().Contains(lowered)
                                      || p.Mold.MoldCode.ToLower().Contains(lowered)
-                                     || p.Mold.MoldName.ToLower().Contains(lowered));
+                                     || p.Mold.MoldName.ToLower().Contains(lowered)
+                                     || (p.Title != null && p.Title.ToLower().Contains(lowered))); // a manual PM's title (migration 025)
         }
 
         return query;

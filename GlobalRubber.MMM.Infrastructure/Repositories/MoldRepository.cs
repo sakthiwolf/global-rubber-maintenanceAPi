@@ -165,6 +165,9 @@ public sealed class MoldRepository : IMoldRepository
                     SerialNumber = mold.SerialNumber,
                     Location = mold.Location,
                     StorageLocation = mold.StorageLocation,
+                    PartNo = mold.PartNo,
+                    PartDescription = mold.PartDescription,
+                    Ownership = mold.Ownership,
                     CommissionDate = mold.CommissionDate,
                     MaximumShots = mold.MaximumShots,
                     WarningShots = mold.WarningShots,
@@ -183,7 +186,8 @@ public sealed class MoldRepository : IMoldRepository
                 foreach (var property in new[]
                 {
                     nameof(Mold.MoldName), nameof(Mold.ProductId), nameof(Mold.MoldType), nameof(Mold.CavityCount), nameof(Mold.Manufacturer),
-                    nameof(Mold.SerialNumber), nameof(Mold.Location), nameof(Mold.StorageLocation), nameof(Mold.CommissionDate),
+                    nameof(Mold.SerialNumber), nameof(Mold.Location), nameof(Mold.StorageLocation), nameof(Mold.PartNo),
+                    nameof(Mold.PartDescription), nameof(Mold.Ownership), nameof(Mold.CommissionDate),
                     nameof(Mold.MaximumShots), nameof(Mold.WarningShots), nameof(Mold.ReplacementShots), nameof(Mold.MaintenanceFrequencyShots),
                     nameof(Mold.PmWarningShots), nameof(Mold.CurrentUsageShots), nameof(Mold.ResponsibleEmployeeId), nameof(Mold.Status),
                     nameof(Mold.Remarks), nameof(Mold.UpdatedAt), nameof(Mold.UpdatedBy),

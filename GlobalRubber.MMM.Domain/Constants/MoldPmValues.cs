@@ -13,8 +13,11 @@ public static class MoldPmCategory
 {
     public const string ShotBased = "Shot-based";
 
+    /// <summary>The category of a MANUAL (one-time) mold PM (migration 025) - already allowed by the CHECK constraint.</summary>
+    public const string Scheduled = "Scheduled";
+
     /// <summary>Every value CK_mold_pm_transaction_category allows (database/scripts/008_create_constraints.sql).</summary>
-    public static readonly IReadOnlyList<string> All = new[] { "Scheduled", ShotBased, "Damage Repair", "Cleaning", "Inspection", "Preventive", "Replacement" };
+    public static readonly IReadOnlyList<string> All = new[] { Scheduled, ShotBased, "Damage Repair", "Cleaning", "Inspection", "Preventive", "Replacement" };
 }
 
 /// <summary>
@@ -55,8 +58,26 @@ public static class NotificationTypes
     /// <summary>A spare part's stock moved into Out of Stock (migration 016).</summary>
     public const string SparePartOutOfStock = "SparePartOutOfStock";
 
-    /// <summary>Exactly what CK_notification_transaction_type allows (migrations 014 + 016).</summary>
-    public static readonly IReadOnlyList<string> All = new[] { MoldPmWarning, MoldPmDue, SparePartLowStock, SparePartOutOfStock };
+    // Migration 021: the Machine Breakdown workflow (module TRN_MACHINE_BREAKDOWN) ...
+    public const string BreakdownReported = "BreakdownReported";
+    public const string BreakdownAssigned = "BreakdownAssigned";
+    public const string BreakdownStarted = "BreakdownStarted";
+    public const string BreakdownResolved = "BreakdownResolved";
+    public const string BreakdownClosed = "BreakdownClosed";
+    public const string BreakdownReopened = "BreakdownReopened";
+
+    // ... and Machine PM (module TRN_MACHINE_PM): an occurrence was scheduled, its date has come, its date has passed.
+    public const string MachinePmScheduled = "MachinePmScheduled";
+    public const string MachinePmDue = "MachinePmDue";
+    public const string MachinePmOverdue = "MachinePmOverdue";
+
+    /// <summary>Exactly what CK_notification_transaction_type allows (migrations 014 + 016 + 021).</summary>
+    public static readonly IReadOnlyList<string> All = new[]
+    {
+        MoldPmWarning, MoldPmDue, SparePartLowStock, SparePartOutOfStock,
+        BreakdownReported, BreakdownAssigned, BreakdownStarted, BreakdownResolved, BreakdownClosed, BreakdownReopened,
+        MachinePmScheduled, MachinePmDue, MachinePmOverdue,
+    };
 }
 
 public static class NotificationSeverity

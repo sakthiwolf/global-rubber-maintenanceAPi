@@ -23,6 +23,11 @@ public sealed class MoldDto
     public string? SerialNumber { get; init; }
     public string? Location { get; init; }
     public string? StorageLocation { get; init; }
+
+    /// <summary>F01 fields (migration 024); null when not entered.</summary>
+    public string? PartNo { get; init; }
+    public string? PartDescription { get; init; }
+    public string? Ownership { get; init; }
     public DateOnly? CommissionDate { get; init; }
     public int MaximumShots { get; init; }
     public int WarningShots { get; init; }

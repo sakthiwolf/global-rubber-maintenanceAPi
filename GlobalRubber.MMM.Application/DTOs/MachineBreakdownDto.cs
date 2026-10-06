@@ -13,6 +13,9 @@ public sealed class MachineBreakdownDto
     public string MachineCode { get; init; } = string.Empty;
     public string MachineName { get; init; } = string.Empty;
 
+    /// <summary>The machine's CURRENT operational status (Running / Idle / Breakdown / Maintenance).</summary>
+    public string? MachineOperationalStatus { get; init; }
+
     public DateOnly BreakdownDate { get; init; }
     public TimeOnly BreakdownTime { get; init; }
 
@@ -34,6 +37,9 @@ public sealed class MachineBreakdownDto
 
     public int? AssignedEngineerId { get; init; }
     public string? AssignedEngineerName { get; init; }
+
+    /// <summary>Migration 021: the assignee typed by name (not an employee); null when an employee is assigned.</summary>
+    public string? AssignedToName { get; init; }
     public DateTime? AssignedAt { get; init; }
     public DateTime? MaintenanceStartedAt { get; init; }
     public DateTime? ResolvedAt { get; init; }

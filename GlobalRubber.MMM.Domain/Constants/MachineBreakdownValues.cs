@@ -37,4 +37,5 @@ public static class BreakdownAuditNames
 {
     public const string Created = "MachineBreakdownCreated";
     public const string StageChanged = "MachineBreakdownStageChanged";
+    public const string Reopened = "MachineBreakdownReopened";
 }

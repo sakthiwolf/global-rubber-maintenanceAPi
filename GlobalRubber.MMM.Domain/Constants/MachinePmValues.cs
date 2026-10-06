@@ -31,7 +31,13 @@ public static class MachinePmBucket
     public const string Yearly = "yearly";
     public const string Completed = "completed";
 
-    public static readonly IReadOnlyList<string> All = new[] { Daily, Weekly, Monthly, Yearly, Completed };
+    /// <summary>
+    /// Migration 025: DUE open MANUAL (one-time) PMs - not completed, schedule type Manual, scheduled date &lt;= today
+    /// (overdue included), like the frequency tabs. A manual PM has no plan and so no frequency.
+    /// </summary>
+    public const string OneTime = "one-time";
+
+    public static readonly IReadOnlyList<string> All = new[] { Daily, Weekly, Monthly, Yearly, OneTime, Completed };
 
     /// <summary>The checklist frequency a frequency tab stands for (ChecklistFrequency values); null for completed.</summary>
     public static string? FrequencyOf(string bucket) => bucket switch

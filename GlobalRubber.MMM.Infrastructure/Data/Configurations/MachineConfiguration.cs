@@ -16,13 +16,18 @@ public class MachineConfiguration : IEntityTypeConfiguration<Machine>
         builder.Property(e => e.MachineCode).HasColumnName("machine_code").HasMaxLength(20).IsUnicode(false).IsRequired();
         builder.Property(e => e.MachineName).HasColumnName("machine_name").HasMaxLength(150).IsRequired();
         builder.Property(e => e.MachineType).HasColumnName("machine_type").HasMaxLength(100).IsRequired();
-        builder.Property(e => e.DepartmentId).HasColumnName("department_id").IsRequired();
+        // Migration 023: optional (NULL = no department yet). FK_machine_master_department below is unchanged.
+        builder.Property(e => e.DepartmentId).HasColumnName("department_id");
         builder.Property(e => e.Location).HasColumnName("location").HasMaxLength(150).IsRequired();
         builder.Property(e => e.Manufacturer).HasColumnName("manufacturer").HasMaxLength(100);
         builder.Property(e => e.Model).HasColumnName("model").HasMaxLength(100);
         builder.Property(e => e.SerialNumber).HasColumnName("serial_number").HasMaxLength(100);
         builder.Property(e => e.Capacity).HasColumnName("capacity").HasMaxLength(50);
         builder.Property(e => e.InstallationDate).HasColumnName("installation_date").HasColumnType("date");
+        // Migration 022 (F01 List of Machines): optional range, ownership and purchase date.
+        builder.Property(e => e.MachineRange).HasColumnName("machine_range").HasMaxLength(100);
+        builder.Property(e => e.Ownership).HasColumnName("ownership").HasMaxLength(100);
+        builder.Property(e => e.PurchaseDate).HasColumnName("purchase_date").HasColumnType("date");
         builder.Property(e => e.MaintenanceFrequencyDays).HasColumnName("maintenance_frequency_days").IsRequired();
         builder.Property(e => e.ResponsibleEngineerId).HasColumnName("responsible_engineer_id");
         builder.Property(e => e.Criticality).HasColumnName("criticality").HasMaxLength(10).IsUnicode(false).IsRequired();
@@ -40,6 +45,7 @@ public class MachineConfiguration : IEntityTypeConfiguration<Machine>
         builder.HasOne(e => e.Department)
             .WithMany()
             .HasForeignKey(e => e.DepartmentId)
+            .IsRequired(false)
             .OnDelete(DeleteBehavior.NoAction);
 
         // Responsible Engineer temporarily disabled. Database field and relationship intentionally retained for future

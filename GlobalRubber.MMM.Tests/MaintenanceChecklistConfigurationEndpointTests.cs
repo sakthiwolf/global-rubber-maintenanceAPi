@@ -34,7 +34,7 @@ public class MaintenanceChecklistConfigurationEndpointTests : IClassFixture<ApiW
         var departments = new InMemoryDepartmentRepository(DepartmentTestData.Departments());
         var employees = new InMemoryEmployeeRepository(EmployeeTestData.Employees(), departments);
         var machineList = MachineTestData.Machines();
-        var checklists = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList);
+        var checklists = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.All(), machineList);
         var audit = new RecordingAuditLog();
         var authorization = decide is null ? new StubPermissionAuthorization(permissionGranted) : new StubPermissionAuthorization(decide);
 
@@ -71,7 +71,13 @@ public class MaintenanceChecklistConfigurationEndpointTests : IClassFixture<ApiW
     private static readonly string StartToday = new GlobalRubber.MMM.Infrastructure.Services.DateTimeProvider().Today.ToString("yyyy-MM-dd");
 
     private static object Body(string appliesTo = "Machine", string? frequency = "Daily", int? machineId = 1, string name = "Injection Machine Daily Inspection", string? startDate = "(today)") =>
-        new { checklistName = name, appliesTo, frequency, machineId, startDate = startDate == "(today)" ? StartToday : startDate, items = new[] { new { itemLabel = "Oil level checked" } } };
+        new
+        {
+            checklistName = name, appliesTo, frequency, machineId, startDate = startDate == "(today)" ? StartToday : startDate,
+            // Migration 020: a Machine plan uses Checklist Master 901 and sends no items; a Mold plan sends its own.
+            sourceChecklistId = appliesTo == "Machine" ? (int?)MaintenanceChecklistTestData.DefaultMasterId : null,
+            items = appliesTo == "Machine" ? null : new[] { new { itemLabel = "Oil level checked" } },
+        };
 
     // ================================================================ create
 
@@ -146,7 +152,7 @@ public class MaintenanceChecklistConfigurationEndpointTests : IClassFixture<ApiW
         Assert.Equal("CHK-0004", data.GetProperty("checklistCode").GetString());
         Assert.False(data.TryGetProperty("pmNo", out _)); // the response is the checklist, not a scheduling result
         var occurrence = Assert.Single(h.Checklists.Pms);
-        Assert.Equal((2, "Scheduled", 1), (occurrence.MachineId, occurrence.Status, occurrence.ChecklistItems.Count));
+        Assert.Equal((2, "Scheduled", 2), (occurrence.MachineId, occurrence.Status, occurrence.ChecklistItems.Count)); // Checklist Master 901 has 2 items
         Assert.Null(occurrence.MaintenanceTypeId);
     }
 
@@ -188,8 +194,8 @@ public class MaintenanceChecklistConfigurationEndpointTests : IClassFixture<ApiW
         return (data.GetProperty("checklistId").GetInt32(), data.GetProperty("rowVersion").GetString()!);
     }
 
-    private static object UpdateBodyF4(string rowVersion, string frequency = "Daily", int? machineId = 2, string appliesTo = "Machine", params string[] labels) =>
-        new { checklistName = "Injection Machine Daily Inspection", appliesTo, frequency, machineId, startDate = StartToday, items = (labels.Length == 0 ? new[] { "Oil level checked" } : labels).Select(l => new { itemLabel = l }), rowVersion };
+    private static object UpdateBodyF4(string rowVersion, string frequency = "Daily", int? machineId = 2, string appliesTo = "Machine", int sourceChecklistId = MaintenanceChecklistTestData.DefaultMasterId) =>
+        new { checklistName = "Injection Machine Daily Inspection", appliesTo, frequency, machineId, startDate = StartToday, sourceChecklistId, rowVersion };
 
     [Fact]
     public async Task Put_FrequencyMachineAndItems_MovesAndReDatesTheSameOccurrence()
@@ -198,12 +204,13 @@ public class MaintenanceChecklistConfigurationEndpointTests : IClassFixture<ApiW
         var (id, rowVersion) = await PostMachineChecklist(h);
         var pmNo = Assert.Single(h.Checklists.Pms).PmNo;
 
-        var response = await h.Client.PutAsync($"{Url}/{id}", Json(UpdateBodyF4(rowVersion, frequency: "Weekly", machineId: 1, labels: new[] { "Belts checked", "Oil level checked" })));
+        // Migration 020: "new items" = another Checklist Master (905, four items).
+        var response = await h.Client.PutAsync($"{Url}/{id}", Json(UpdateBodyF4(rowVersion, frequency: "Weekly", machineId: 1, sourceChecklistId: MaintenanceChecklistTestData.WeeklyMasterId)));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var open = Assert.Single(h.Checklists.Pms);
         Assert.Equal((pmNo, 1), (open.PmNo, open.MachineId));
-        Assert.Equal(new[] { "Belts checked", "Oil level checked" }, open.ChecklistItems.Select(l => l.ItemLabel));
+        Assert.Equal(new[] { "Oil level checked", "Lubrication checked", "Belt condition checked", "Safety guard checked" }, open.ChecklistItems.Select(l => l.ItemLabel));
         Assert.Equal("ChecklistUpdated", h.Audit.Entries.Last().Action);
         Assert.Contains(h.Audit.Entries.Last().Details, d => d.FieldName == $"open_pm_machine ({pmNo})");
     }
@@ -247,21 +254,31 @@ public class MaintenanceChecklistConfigurationEndpointTests : IClassFixture<ApiW
     // ================================================================ update: inactive legacy checklist
 
     [Fact]
-    public async Task Put_InactiveLegacyChecklist_WithNoFrequencyOrMachine_Returns200()
+    public async Task Put_InactiveLegacyChecklist_WithNoMachine_Returns200_ButNeverWithoutAFrequency()
     {
         var h = CreateHarness();
         var rowVersion = Convert.ToBase64String(h.Checklists.Stored(3).RowVersion);
 
-        var response = await h.Client.PutAsync($"{Url}/3", Json(new
+        // Migration 020: a row without a frequency is a Checklist Master, so a plan always keeps one.
+        var noFrequency = await h.Client.PutAsync($"{Url}/3", Json(new
         {
             checklistName = "Old Checklist", appliesTo = "Machine", frequency = (string?)null, machineId = (int?)null,
             items = new[] { new { itemLabel = "Legacy step" } }, rowVersion,
+        }));
+        Assert.Equal(HttpStatusCode.BadRequest, noFrequency.StatusCode);
+        Assert.Contains("Frequency is required.", await Errors(noFrequency));
+
+        var response = await h.Client.PutAsync($"{Url}/3", Json(new
+        {
+            checklistName = "Old Checklist", appliesTo = "Machine", frequency = "Monthly", machineId = (int?)null,
+            items = new[] { new { itemLabel = "Legacy step" } }, rowVersion, // an older plan keeps its own items (no master yet)
         }));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var data = (await Root(response)).GetProperty("data");
         Assert.False(data.GetProperty("isActive").GetBoolean());
-        Assert.Equal(JsonValueKind.Null, data.GetProperty("frequency").ValueKind);
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("machineId").ValueKind);
+        Assert.Equal("Legacy step", data.GetProperty("items")[0].GetProperty("itemLabel").GetString());
     }
 
     // ================================================================ lookups (11, 12, 14, 15)

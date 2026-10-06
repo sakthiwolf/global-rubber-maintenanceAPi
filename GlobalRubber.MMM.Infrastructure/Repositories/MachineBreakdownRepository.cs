@@ -4,6 +4,7 @@ using GlobalRubber.MMM.Application.Interfaces;
 using GlobalRubber.MMM.Application.Interfaces.Repositories;
 using GlobalRubber.MMM.Domain.Constants;
 using GlobalRubber.MMM.Domain.Entities;
+using GlobalRubber.MMM.Domain.Rules;
 using GlobalRubber.MMM.Infrastructure.Data;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -32,6 +33,11 @@ public sealed class MachineBreakdownRepository : IMachineBreakdownRepository
         if (query.MachineId is { } machineId)
         {
             q = q.Where(b => b.MachineId == machineId);
+        }
+
+        if (query.ActiveOnly == true)
+        {
+            q = q.Where(b => b.Stage != BreakdownStage.Closed);
         }
 
         if (!string.IsNullOrEmpty(query.Stage?.Trim()))
@@ -75,26 +81,36 @@ public sealed class MachineBreakdownRepository : IMachineBreakdownRepository
             .Include(b => b.AssignedEngineer)
             .FirstOrDefaultAsync(b => b.MachineBreakdownId == machineBreakdownId, cancellationToken);
 
-    public async Task<MachineBreakdown> AddAsync(MachineBreakdown breakdown, CancellationToken cancellationToken)
+    public async Task<MachineBreakdown> AddAsync(MachineBreakdown breakdown, BreakdownMachineStatusPlan? machinePlan, CancellationToken cancellationToken)
     {
         var strategy = _dbContext.Database.CreateExecutionStrategy();
+        var machineLock = new MachinePmOccurrenceWriter(_dbContext, _documentSequence); // the machine-row lock Machine PM uses
+        Machine? machine = null;
 
         try
         {
             await strategy.ExecuteAsync(async () =>
             {
                 Detach(breakdown);
+                machineLock.Detach(machine);
 
                 var ownsTransaction = _dbContext.Database.CurrentTransaction is null;
                 await using var transaction = ownsTransaction
                     ? await _dbContext.Database.BeginTransactionAsync(cancellationToken)
                     : null;
 
+                // Machine row first (the lock order Machine PM uses everywhere), then the sequence and the insert.
+                if (machinePlan is not null)
+                {
+                    machine = await machineLock.LockMachineAsync(breakdown.MachineId, cancellationToken);
+                    machinePlan.ApplyToLockedMachine(machine, await CountOtherUnresolvedAsync(breakdown.MachineId, excludeId: null, cancellationToken));
+                }
+
                 breakdown.BreakdownNo = await _documentSequence.NextCodeAsync(
                     DocumentTypes.MachineBreakdown, cancellationToken);
 
                 _dbContext.MachineBreakdowns.Add(breakdown);
-                await _dbContext.SaveChangesAsync(cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken); // the breakdown and the machine change together
 
                 if (transaction is not null)
                 {
@@ -105,39 +121,54 @@ public sealed class MachineBreakdownRepository : IMachineBreakdownRepository
         catch (DbUpdateException ex) when (IsUniqueViolation(ex))
         {
             Detach(breakdown);
+            machineLock.Detach(machine);
             throw new ConflictException(
                 "The breakdown number could not be issued because it already exists. Please try again.");
         }
         catch
         {
             Detach(breakdown);
+            machineLock.Detach(machine);
             throw;
         }
 
         Detach(breakdown);
+        machineLock.Detach(machine);
         return breakdown;
     }
 
     public async Task<MachineBreakdown> UpdateStageAsync(
-        MachineBreakdown breakdown, byte[] originalRowVersion, CancellationToken cancellationToken)
+        MachineBreakdown breakdown, byte[] originalRowVersion, BreakdownMachineStatusPlan? machinePlan, CancellationToken cancellationToken)
     {
         var strategy = _dbContext.Database.CreateExecutionStrategy();
+        var machineLock = new MachinePmOccurrenceWriter(_dbContext, _documentSequence);
+        Machine? machine = null;
 
         try
         {
             await strategy.ExecuteAsync(async () =>
             {
                 DetachById(breakdown.MachineBreakdownId);
+                machineLock.Detach(machine);
 
                 var ownsTransaction = _dbContext.Database.CurrentTransaction is null;
                 await using var transaction = ownsTransaction
                     ? await _dbContext.Database.BeginTransactionAsync(cancellationToken)
                     : null;
 
+                // Machine row first (same lock order as create and Machine PM); the other breakdowns are counted while
+                // the machine is locked, so two resolutions of the same machine cannot both miss each other.
+                if (machinePlan is not null)
+                {
+                    machine = await machineLock.LockMachineAsync(breakdown.MachineId, cancellationToken);
+                    machinePlan.ApplyToLockedMachine(machine, await CountOtherUnresolvedAsync(breakdown.MachineId, breakdown.MachineBreakdownId, cancellationToken));
+                }
+
                 var entry = _dbContext.Attach(new MachineBreakdown { MachineBreakdownId = breakdown.MachineBreakdownId, RowVersion = originalRowVersion });
                 // Only write the columns that a stage advance can change.
                 entry.Property(b => b.Stage).IsModified = true;
                 entry.Property(b => b.AssignedEngineerId).IsModified = true;
+                entry.Property(b => b.AssignedToName).IsModified = true;
                 entry.Property(b => b.AssignedAt).IsModified = true;
                 entry.Property(b => b.MaintenanceStartedAt).IsModified = true;
                 entry.Property(b => b.ResolvedAt).IsModified = true;
@@ -151,6 +182,7 @@ public sealed class MachineBreakdownRepository : IMachineBreakdownRepository
                 // Copy values from the caller's breakdown.
                 entry.Entity.Stage = breakdown.Stage;
                 entry.Entity.AssignedEngineerId = breakdown.AssignedEngineerId;
+                entry.Entity.AssignedToName = breakdown.AssignedToName;
                 entry.Entity.AssignedAt = breakdown.AssignedAt;
                 entry.Entity.MaintenanceStartedAt = breakdown.MaintenanceStartedAt;
                 entry.Entity.ResolvedAt = breakdown.ResolvedAt;
@@ -181,10 +213,17 @@ public sealed class MachineBreakdownRepository : IMachineBreakdownRepository
         finally
         {
             DetachById(breakdown.MachineBreakdownId);
+            machineLock.Detach(machine);
         }
 
         return breakdown;
     }
+
+    // The machine's OTHER breakdowns that still keep it down (before Resolved).
+    private Task<int> CountOtherUnresolvedAsync(int machineId, int? excludeId, CancellationToken cancellationToken) =>
+        _dbContext.MachineBreakdowns.AsNoTracking()
+            .Where(b => b.MachineId == machineId && b.MachineBreakdownId != excludeId && MachineBreakdownRules.UnresolvedStages.Contains(b.Stage))
+            .CountAsync(cancellationToken);
 
     private void Detach(MachineBreakdown breakdown)
     {

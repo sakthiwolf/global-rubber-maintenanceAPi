@@ -33,6 +33,12 @@ public class MachineBreakdown : AuditableEntity
     public string Stage { get; set; } = BreakdownStage.Reported;
 
     public int? AssignedEngineerId { get; set; }
+
+    /// <summary>
+    /// Migration 021: the assignee typed by name when the person is not in the employee master. Never set together with
+    /// <see cref="AssignedEngineerId"/> (CK_machine_breakdown_transaction_assignee) and never turned into an employee.
+    /// </summary>
+    public string? AssignedToName { get; set; }
     public DateTime? AssignedAt { get; set; }
     public DateTime? MaintenanceStartedAt { get; set; }
     public DateTime? ResolvedAt { get; set; }

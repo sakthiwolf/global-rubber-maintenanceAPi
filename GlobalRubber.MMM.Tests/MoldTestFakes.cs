@@ -84,7 +84,8 @@ internal sealed class InMemoryMoldRepository : IMoldRepository
     {
         MoldId = m.MoldId, MoldCode = m.MoldCode, MoldName = m.MoldName, ProductId = m.ProductId, MoldType = m.MoldType,
         CavityCount = m.CavityCount, Manufacturer = m.Manufacturer, SerialNumber = m.SerialNumber, Location = m.Location,
-        StorageLocation = m.StorageLocation, CommissionDate = m.CommissionDate, MaximumShots = m.MaximumShots,
+        StorageLocation = m.StorageLocation, PartNo = m.PartNo, PartDescription = m.PartDescription, Ownership = m.Ownership,
+        CommissionDate = m.CommissionDate, MaximumShots = m.MaximumShots,
         WarningShots = m.WarningShots, ReplacementShots = m.ReplacementShots, MaintenanceFrequencyShots = m.MaintenanceFrequencyShots,
         PmWarningShots = m.PmWarningShots, PmCycleStartShots = m.PmCycleStartShots,
         CurrentUsageShots = m.CurrentUsageShots, ResponsibleEmployeeId = m.ResponsibleEmployeeId, Status = m.Status,
@@ -165,6 +166,9 @@ internal sealed class InMemoryMoldRepository : IMoldRepository
         stored.SerialNumber = mold.SerialNumber;
         stored.Location = mold.Location;
         stored.StorageLocation = mold.StorageLocation;
+        stored.PartNo = mold.PartNo;
+        stored.PartDescription = mold.PartDescription;
+        stored.Ownership = mold.Ownership;
         stored.CommissionDate = mold.CommissionDate;
         stored.MaximumShots = mold.MaximumShots;
         stored.WarningShots = mold.WarningShots;

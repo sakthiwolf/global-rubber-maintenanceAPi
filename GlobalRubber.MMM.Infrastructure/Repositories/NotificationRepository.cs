@@ -1,3 +1,4 @@
+using GlobalRubber.MMM.Application.Interfaces;
 using GlobalRubber.MMM.Application.Interfaces.Repositories;
 using GlobalRubber.MMM.Domain.Entities;
 using GlobalRubber.MMM.Infrastructure.Data;
@@ -12,11 +13,13 @@ public sealed class NotificationRepository : INotificationRepository
     private const string Savepoint = "grm_notification";
 
     private readonly GlobalRubberDbContext _dbContext;
+    private readonly INotificationChangeSignal _changeSignal;
     private readonly ILogger<NotificationRepository> _logger;
 
-    public NotificationRepository(GlobalRubberDbContext dbContext, ILogger<NotificationRepository> logger)
+    public NotificationRepository(GlobalRubberDbContext dbContext, INotificationChangeSignal changeSignal, ILogger<NotificationRepository> logger)
     {
         _dbContext = dbContext;
+        _changeSignal = changeSignal;
         _logger = logger;
     }
 
@@ -38,6 +41,9 @@ public sealed class NotificationRepository : INotificationRepository
         try
         {
             await _dbContext.SaveChangesAsync(cancellationToken);
+            // Every notification insert passes through here (publisher and direct callers): record it so the clients are
+            // told to refresh - AFTER the request (and so the caller's transaction) has completed, never from inside it.
+            _changeSignal.NotificationsCreated();
             return NotificationWriteResult.Added;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

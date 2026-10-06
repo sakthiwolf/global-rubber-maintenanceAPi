@@ -13,6 +13,9 @@ public sealed class MachineListQuery : PaginationRequest
 
     public int? DepartmentId { get; set; }
 
+    /// <summary>true = only machines WITHOUT a department (migration 023). Takes precedence over DepartmentId.</summary>
+    public bool? NoDepartment { get; set; }
+
     /// <summary>Running / Idle / Breakdown / Maintenance; any other value simply matches nothing.</summary>
     public string? OperationalStatus { get; set; }
 

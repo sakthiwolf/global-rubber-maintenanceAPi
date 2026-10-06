@@ -39,6 +39,9 @@ public sealed class MoldService : IMoldService
     private const int SerialNumberMaxLength = 100;    // serial_number NVARCHAR(100)
     private const int LocationMaxLength = 100;        // location NVARCHAR(100)
     private const int StorageLocationMaxLength = 100; // storage_location NVARCHAR(100)
+    private const int PartNoMaxLength = 100;          // part_no NVARCHAR(100) (migration 024)
+    private const int PartDescriptionMaxLength = 250; // part_description NVARCHAR(250) (migration 024)
+    private const int OwnershipMaxLength = 100;       // ownership NVARCHAR(100) (migration 024)
     private const int RemarksMaxLength = 500;         // remarks NVARCHAR(500)
 
     private readonly IMoldRepository _moldRepository;
@@ -109,6 +112,9 @@ public sealed class MoldService : IMoldService
             SerialNumber = fields.SerialNumber,
             Location = fields.Location,
             StorageLocation = fields.StorageLocation,
+            PartNo = fields.PartNo,
+            PartDescription = fields.PartDescription,
+            Ownership = fields.Ownership,
             CommissionDate = fields.CommissionDate,
             MaximumShots = fields.MaximumShots,
             WarningShots = fields.WarningShots,
@@ -181,6 +187,9 @@ public sealed class MoldService : IMoldService
         Track("serial_number", mold.SerialNumber, fields.SerialNumber);
         Track("location", mold.Location, fields.Location);
         Track("storage_location", mold.StorageLocation, fields.StorageLocation);
+        Track("part_no", mold.PartNo, fields.PartNo);
+        Track("part_description", mold.PartDescription, fields.PartDescription);
+        Track("ownership", mold.Ownership, fields.Ownership);
         Track("commission_date", mold.CommissionDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), fields.CommissionDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
         Track("maximum_shots", Num(mold.MaximumShots), Num(fields.MaximumShots));
         Track("warning_shots", Num(mold.WarningShots), Num(fields.WarningShots));
@@ -200,6 +209,9 @@ public sealed class MoldService : IMoldService
         mold.SerialNumber = fields.SerialNumber;
         mold.Location = fields.Location;
         mold.StorageLocation = fields.StorageLocation;
+        mold.PartNo = fields.PartNo;
+        mold.PartDescription = fields.PartDescription;
+        mold.Ownership = fields.Ownership;
         mold.CommissionDate = fields.CommissionDate;
         mold.MaximumShots = fields.MaximumShots;
         mold.WarningShots = fields.WarningShots;
@@ -309,7 +321,7 @@ public sealed class MoldService : IMoldService
         string Name, int ProductId, string MoldType, int CavityCount, string? Manufacturer, string? SerialNumber,
         string? Location, string? StorageLocation, DateOnly? CommissionDate, int MaximumShots, int WarningShots,
         int ReplacementShots, int? MaintenanceFrequencyShots, int? PmWarningShots, int CurrentUsageShots, int? ResponsibleEmployeeId,
-        string Status, string? Remarks);
+        string Status, string? Remarks, string? PartNo, string? PartDescription, string? Ownership);
 
     // Trim everything, blank optional fields become null. One place so Create and Update can never disagree about what a
     // valid mold looks like; the row version is only checked (and decoded) for Update.
@@ -324,6 +336,9 @@ public sealed class MoldService : IMoldService
         var serialNumber = Optional(request.SerialNumber);
         var location = Optional(request.Location);
         var storageLocation = Optional(request.StorageLocation);
+        var partNo = Optional(request.PartNo);
+        var partDescription = Optional(request.PartDescription);
+        var ownership = Optional(request.Ownership);
         var remarks = Optional(request.Remarks);
         var cavityCount = request.CavityCount ?? 1; // template / DF_mold_master_cavity_count default
         var statusInput = Optional(request.Status);
@@ -350,6 +365,9 @@ public sealed class MoldService : IMoldService
         MaxLength(serialNumber, SerialNumberMaxLength, "SerialNumber");
         MaxLength(location, LocationMaxLength, "Location");
         MaxLength(storageLocation, StorageLocationMaxLength, "StorageLocation");
+        MaxLength(partNo, PartNoMaxLength, "PartNo");
+        MaxLength(partDescription, PartDescriptionMaxLength, "PartDescription");
+        MaxLength(ownership, OwnershipMaxLength, "Ownership");
         MaxLength(remarks, RemarksMaxLength, "Remarks");
 
         if (cavityCount < 1) errors.Add("CavityCount must be at least 1."); // CK_mold_master_cavity_count
@@ -392,7 +410,8 @@ public sealed class MoldService : IMoldService
         return new MoldFields(
             name, request.ProductId, moldType, cavityCount, manufacturer, serialNumber, location, storageLocation,
             request.CommissionDate, request.MaximumShots!.Value, request.WarningShots!.Value, request.ReplacementShots!.Value,
-            request.MaintenanceFrequencyShots, request.PmWarningShots, currentUsage, request.ResponsibleEmployeeId, status!, remarks);
+            request.MaintenanceFrequencyShots, request.PmWarningShots, currentUsage, request.ResponsibleEmployeeId, status!, remarks,
+            partNo, partDescription, ownership);
     }
 
     private static bool TryDecodeRowVersion(string value, out byte[]? bytes)
@@ -452,6 +471,9 @@ public sealed class MoldService : IMoldService
         SerialNumber = mold.SerialNumber,
         Location = mold.Location,
         StorageLocation = mold.StorageLocation,
+        PartNo = mold.PartNo,
+        PartDescription = mold.PartDescription,
+        Ownership = mold.Ownership,
         CommissionDate = mold.CommissionDate,
         MaximumShots = mold.MaximumShots,
         WarningShots = mold.WarningShots,

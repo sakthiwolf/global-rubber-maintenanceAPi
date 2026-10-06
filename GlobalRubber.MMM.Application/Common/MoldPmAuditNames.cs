@@ -16,9 +16,15 @@ public static class MoldPmAuditNames
     /// <summary>The system raised the cycle's warning notification.</summary>
     public const string WarningRaised = "MoldPmWarningRaised";
 
+    /// <summary>Migration 025: a user scheduled a manual (one-time) mold PM.</summary>
+    public const string ManualScheduled = "MoldPmManualScheduled";
+
     public const string Started = "MoldPmStarted";
     public const string Completed = "MoldPmCompleted";
 
     /// <summary>The Trigger shown for the automatic PM.</summary>
     public const string UsageThresholdTrigger = "Usage threshold";
+
+    /// <summary>The Trigger shown for a manual (one-time) PM (migration 025).</summary>
+    public const string ManualTrigger = "Manual schedule";
 }

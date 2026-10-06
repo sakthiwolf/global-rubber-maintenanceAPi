@@ -2,6 +2,7 @@ using System.Text;
 using GlobalRubber.MMM.Api.Configuration;
 using GlobalRubber.MMM.Api.HealthChecks;
 using GlobalRubber.MMM.Api.Middlewares;
+using GlobalRubber.MMM.Api.Realtime;
 using GlobalRubber.MMM.Application.Common;
 using GlobalRubber.MMM.Infrastructure.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -113,7 +114,32 @@ public static class ServiceCollectionExtensions
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Secret)),
                     ValidateLifetime = true,
                 };
+
+                // Browsers cannot set an Authorization header on a WebSocket / SSE request, so the SignalR client sends the
+                // same JWT as the access_token query value - accepted ONLY on the notification hub's path.
+                options.Events = new JwtBearerEvents
+                {
+                    OnMessageReceived = context =>
+                    {
+                        var accessToken = context.Request.Query["access_token"];
+                        if (!string.IsNullOrEmpty(accessToken) && context.HttpContext.Request.Path.StartsWithSegments(NotificationHub.Path))
+                        {
+                            context.Token = accessToken;
+                        }
+
+                        return Task.CompletedTask;
+                    },
+                };
             });
+
+        // Realtime notification signal (replaces unread-count polling).
+        services.AddSignalR();
+
+        // Time-based Machine PM notifications (due today / overdue), scanned on a server-side schedule (migration 021).
+        if (configuration.GetValue("Notifications:MaintenanceScanEnabled", true))
+        {
+            services.AddHostedService<MaintenanceNotificationScanService>();
+        }
 
         return services;
     }

@@ -95,8 +95,8 @@ public class EndpointAuthorizationCoverageTests
     public void EveryPermissionGatedEndpoint_UsesTheActionThatMatchesItsHttpVerb()
     {
         // GET -> View, POST -> Add, PUT/PATCH -> Edit, DELETE -> Delete (DELETE here means Deactivate).
-        // The one reviewed exception: a report download (GET .../export) is gated by Export - and Export is accepted on
-        // nothing but a GET whose route ends in "export".
+        // Reviewed exceptions: a report download (GET .../export) is gated by Export - and Export is accepted on nothing
+        // but a GET whose route ends in "export"; a reopen (PUT .../reopen) is gated by Approve (see below).
         var mismatches = new List<string>();
         foreach (var e in Endpoints())
         {
@@ -120,7 +120,13 @@ public class EndpointAuthorizationCoverageTests
                 && permission.Action == PermissionAction.Export
                 && (e.Http.Template ?? string.Empty).EndsWith("export", StringComparison.Ordinal);
 
-            if (permission.Action != expected && !isExportDownload)
+            // Second reviewed exception (2026-10-05): reopening a CLOSED record is a supervisory correction, gated by
+            // Approve - accepted on nothing but a PUT whose route ends in "reopen".
+            var isSupervisoryReopen = verb == "PUT"
+                && permission.Action == PermissionAction.Approve
+                && (e.Http.Template ?? string.Empty).EndsWith("reopen", StringComparison.Ordinal);
+
+            if (permission.Action != expected && !isExportDownload && !isSupervisoryReopen)
             {
                 mismatches.Add($"{Key(e)}: {verb} requires {permission.Action}, expected {expected}");
             }

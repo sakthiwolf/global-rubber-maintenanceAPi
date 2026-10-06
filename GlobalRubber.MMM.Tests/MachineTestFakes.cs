@@ -75,6 +75,7 @@ internal sealed class InMemoryMachineRepository : IMachineRepository
         MachineId = m.MachineId, MachineCode = m.MachineCode, MachineName = m.MachineName, MachineType = m.MachineType,
         DepartmentId = m.DepartmentId, Location = m.Location, Manufacturer = m.Manufacturer, Model = m.Model,
         SerialNumber = m.SerialNumber, Capacity = m.Capacity, InstallationDate = m.InstallationDate,
+        MachineRange = m.MachineRange, Ownership = m.Ownership, PurchaseDate = m.PurchaseDate,
         MaintenanceFrequencyDays = m.MaintenanceFrequencyDays, ResponsibleEngineerId = m.ResponsibleEngineerId,
         Criticality = m.Criticality, OperationalStatus = m.OperationalStatus, LastMaintenanceDate = m.LastMaintenanceDate,
         NextMaintenanceDate = m.NextMaintenanceDate, Remarks = m.Remarks, IsActive = m.IsActive, CreatedAt = m.CreatedAt,
@@ -84,7 +85,7 @@ internal sealed class InMemoryMachineRepository : IMachineRepository
     private Machine Clone(Machine m)
     {
         var copy = CopyColumns(m);
-        copy.Department = _departments.Stored(m.DepartmentId);
+        copy.Department = m.DepartmentId is { } departmentId ? _departments.Stored(departmentId) : null;
         copy.ResponsibleEngineer = m.ResponsibleEngineerId is { } id ? _employees.Stored(id) : null;
         return copy;
     }
@@ -95,7 +96,8 @@ internal sealed class InMemoryMachineRepository : IMachineRepository
     {
         IEnumerable<Machine> q = _machines;
         if (query.IsActive is { } active) q = q.Where(m => m.IsActive == active);
-        if (query.DepartmentId is { } departmentId) q = q.Where(m => m.DepartmentId == departmentId);
+        if (query.NoDepartment == true) q = q.Where(m => m.DepartmentId == null);
+        else if (query.DepartmentId is { } departmentId) q = q.Where(m => m.DepartmentId == departmentId);
         if (!string.IsNullOrWhiteSpace(query.OperationalStatus)) q = q.Where(m => m.OperationalStatus == query.OperationalStatus.Trim());
         var search = query.Search?.Trim();
         if (!string.IsNullOrEmpty(search))
@@ -155,6 +157,9 @@ internal sealed class InMemoryMachineRepository : IMachineRepository
         stored.SerialNumber = machine.SerialNumber;
         stored.Capacity = machine.Capacity;
         stored.InstallationDate = machine.InstallationDate;
+        stored.MachineRange = machine.MachineRange;
+        stored.Ownership = machine.Ownership;
+        stored.PurchaseDate = machine.PurchaseDate;
         stored.MaintenanceFrequencyDays = machine.MaintenanceFrequencyDays;
         // ResponsibleEngineerId is never written (Responsible Engineer temporarily disabled) - same as the real repository.
         stored.Criticality = machine.Criticality;

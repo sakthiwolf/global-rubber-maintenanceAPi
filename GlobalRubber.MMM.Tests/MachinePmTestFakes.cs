@@ -74,7 +74,7 @@ internal sealed class MachinePmScenario
         {
             MachinePmId = id, PmNo = $"MPM-{PmSequence:0000}", MachineId = machineId ?? checklist?.MachineId ?? 1, ChecklistId = checklist?.ChecklistId,
             ScheduledDate = due, Status = status, CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), CreatedBy = 1, RowVersion = new byte[] { 1 },
-            ChecklistItems = (checklist?.Items ?? new List<MaintenanceChecklistItem>()).OrderBy(i => i.SortOrder)
+            ChecklistItems = (checklist?.EffectiveItems() ?? new List<MaintenanceChecklistItem>()).OrderBy(i => i.SortOrder)
                 .Select((i, n) => new MachinePmChecklistItem { MachinePmChecklistId = id * 100 + n, MachinePmId = id, SortOrder = i.SortOrder, ItemLabel = i.ItemLabel, ChecklistItemId = i.ChecklistItemId })
                 .ToList(),
         };
@@ -110,6 +110,7 @@ internal sealed class InMemoryMachinePmRepository : IMachinePmRepository
     {
         MachinePmId = p.MachinePmId, PmNo = p.PmNo, MachineId = p.MachineId, MaintenanceTypeId = p.MaintenanceTypeId, ScheduledDate = p.ScheduledDate,
         CompletedDate = p.CompletedDate, EngineerId = p.EngineerId, ChecklistId = p.ChecklistId, Remarks = p.Remarks, MaintenanceBy = p.MaintenanceBy, Status = p.Status,
+        ScheduleType = p.ScheduleType, Title = p.Title,
         CreatedAt = p.CreatedAt, CreatedBy = p.CreatedBy, UpdatedAt = p.UpdatedAt, UpdatedBy = p.UpdatedBy, RowVersion = (byte[])p.RowVersion.Clone(),
         Machine = StoredMachine(p.MachineId),
         Checklist = p.ChecklistId is { } c ? _data.Checklists.Single(x => x.ChecklistId == c) : null,
@@ -125,6 +126,9 @@ internal sealed class InMemoryMachinePmRepository : IMachinePmRepository
         ChecklistId = c.ChecklistId, ChecklistCode = c.ChecklistCode, ChecklistName = c.ChecklistName, AppliesTo = c.AppliesTo, Frequency = c.Frequency,
         MachineId = c.MachineId, StartDate = c.StartDate, IsActive = c.IsActive, CreatedAt = c.CreatedAt, RowVersion = (byte[])c.RowVersion.Clone(),
         Items = c.Items.OrderBy(i => i.SortOrder).Select(i => new MaintenanceChecklistItem { ChecklistItemId = i.ChecklistItemId, ChecklistId = i.ChecklistId, SortOrder = i.SortOrder, ItemLabel = i.ItemLabel }).ToList(),
+        // Migration 020: like the real repository's Include - the plan's Checklist Master comes with its CURRENT items.
+        SourceChecklistId = c.SourceChecklistId,
+        SourceChecklist = c.SourceChecklist is null ? null : CloneChecklist(c.SourceChecklist),
     };
 
     private IEnumerable<MachinePm> Filtered(MachinePmListQuery q)
@@ -136,7 +140,8 @@ internal sealed class InMemoryMachinePmRepository : IMachinePmRepository
         {
             all = all.Where(p => p.PmNo.Contains(search, StringComparison.OrdinalIgnoreCase)
                                  || StoredMachine(p.MachineId).MachineCode.Contains(search, StringComparison.OrdinalIgnoreCase)
-                                 || StoredMachine(p.MachineId).MachineName.Contains(search, StringComparison.OrdinalIgnoreCase));
+                                 || StoredMachine(p.MachineId).MachineName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                                 || (p.Title?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false));
         }
 
         return all;
@@ -146,9 +151,13 @@ internal sealed class InMemoryMachinePmRepository : IMachinePmRepository
 
     // Like the real repository: DUE open PMs (scheduled on or before today) by their checklist's frequency (overdue
     // included), completed PMs together.
-    private bool InBucket(MachinePm p, string bucket, DateOnly today) => bucket == MachinePmBucket.Completed
-        ? p.Status == MachinePmStatus.Completed
-        : p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && FrequencyOf(p) == MachinePmBucket.FrequencyOf(bucket);
+    private bool InBucket(MachinePm p, string bucket, DateOnly today) => bucket switch
+    {
+        MachinePmBucket.Completed => p.Status == MachinePmStatus.Completed,
+        // Migration 025: due open manual PMs (no plan, no frequency).
+        MachinePmBucket.OneTime => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && p.ScheduleType == PmScheduleType.Manual,
+        _ => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && FrequencyOf(p) == MachinePmBucket.FrequencyOf(bucket),
+    };
 
     public Task<(IReadOnlyList<MachinePm> Items, int TotalCount)> GetAllAsync(MachinePmListQuery query, DateOnly today, CancellationToken cancellationToken)
     {
@@ -169,6 +178,7 @@ internal sealed class InMemoryMachinePmRepository : IMachinePmRepository
             Weekly = all.Count(p => InBucket(p, MachinePmBucket.Weekly, today)),
             Monthly = all.Count(p => InBucket(p, MachinePmBucket.Monthly, today)),
             Yearly = all.Count(p => InBucket(p, MachinePmBucket.Yearly, today)),
+            OneTime = all.Count(p => InBucket(p, MachinePmBucket.OneTime, today)),
             Completed = all.Count(p => InBucket(p, MachinePmBucket.Completed, today)),
         });
     }
@@ -184,6 +194,32 @@ internal sealed class InMemoryMachinePmRepository : IMachinePmRepository
         Machines = _data.Machines.Where(m => m.IsActive).OrderBy(m => m.MachineCode)
             .Select(m => new MachinePmMachineLookupDto { MachineId = m.MachineId, MachineCode = m.MachineCode, MachineName = m.MachineName, Location = m.Location }).ToList(),
     });
+
+    public int AddManualCalls { get; private set; }
+
+    // Migration 025: one manual PM - MPM-NNNN from the MACHINE_PM sequence, its snapshot lines; nothing else is written.
+    public Task<MachinePm> AddManualAsync(MachinePm pm, CancellationToken cancellationToken)
+    {
+        AddManualCalls++;
+        if (FailNextSave)
+        {
+            FailNextSave = false;
+            throw new DbUpdateException("Simulated database failure while scheduling.");
+        }
+
+        _data.PmSequence++;
+        pm.MachinePmId = _data.Pms.Count == 0 ? 1 : _data.Pms.Max(p => p.MachinePmId) + 1;
+        pm.PmNo = $"MPM-{_data.PmSequence:0000}";
+        pm.RowVersion = new byte[] { 1 };
+        foreach (var line in pm.ChecklistItems)
+        {
+            line.MachinePmChecklistId = _nextLineId++;
+            line.MachinePmId = pm.MachinePmId;
+        }
+
+        _data.Pms.Add(Clone(pm));
+        return Task.FromResult(pm);
+    }
 
     public Task<MachinePm> CompleteAsync(MachinePm pm, byte[] originalRowVersion, MachinePmCompletionPlan plan, CancellationToken cancellationToken)
     {
@@ -224,7 +260,8 @@ internal sealed class InMemoryMachinePmRepository : IMachinePmRepository
 
         foreach (var machine in locked)
         {
-            var openDueDates = _data.Pms.Where(p => p != stored && IsOpen(p) && p.MachineId == machine.MachineId).Select(p => p.ScheduledDate)
+            // Like MachinePmOccurrenceWriter.OpenDueDatesAsync: automatic occurrences only (migration 025).
+            var openDueDates = _data.Pms.Where(p => p != stored && IsOpen(p) && p.MachineId == machine.MachineId && p.ScheduleType == PmScheduleType.Automatic).Select(p => p.ScheduledDate)
                 .Concat(successor is not null && successor.MachineId == machine.MachineId ? new[] { successor.ScheduledDate } : Array.Empty<DateOnly>())
                 .OrderBy(d => d).ToList();
             plan.ApplyToLockedMachine(machine, openDueDates);

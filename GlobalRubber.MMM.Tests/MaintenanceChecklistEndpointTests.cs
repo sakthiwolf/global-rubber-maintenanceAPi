@@ -35,7 +35,7 @@ public class MaintenanceChecklistEndpointTests : IClassFixture<ApiWebApplication
         var departments = new InMemoryDepartmentRepository(DepartmentTestData.Departments());
         var employees = new InMemoryEmployeeRepository(EmployeeTestData.Employees(), departments);
         var machineList = MachineTestData.Machines();
-        var checklists = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList);
+        var checklists = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.All(), machineList);
         var audit = new RecordingAuditLog();
         var authorization = decide is null ? new StubPermissionAuthorization(permissionGranted) : new StubPermissionAuthorization(decide);
 
@@ -74,11 +74,14 @@ public class MaintenanceChecklistEndpointTests : IClassFixture<ApiWebApplication
     // Recurring configuration: a Machine checklist is Daily on machine 1 (active); the Mold checklist (2) is Weekly with no machine.
     private static readonly string StartToday = new GlobalRubber.MMM.Infrastructure.Services.DateTimeProvider().Today.ToString("yyyy-MM-dd");
 
+    // Migration 020: a Machine plan uses Checklist Master 901 ("Hoses checked", "Pressure recorded") and sends no items;
+    // a Mold plan sends its own.
     private static string CreateBody(string name = "Hydraulic Inspection", string appliesTo = "Machine", params string[] labels) =>
         JsonSerializer.Serialize(new
         {
             checklistName = name, appliesTo, frequency = "Daily", machineId = appliesTo == "Machine" ? (int?)1 : null, startDate = StartToday,
-            items = ItemsOf(labels.Length == 0 ? new[] { "Hoses checked" } : labels),
+            sourceChecklistId = appliesTo == "Machine" ? (int?)MaintenanceChecklistTestData.DefaultMasterId : null,
+            items = appliesTo == "Machine" ? null : ItemsOf(labels.Length == 0 ? new[] { "Hoses checked" } : labels),
         });
 
     private static string UpdateBody(string rowVersion, string name = "Mold Cleaning v2", string appliesTo = "Mold", params string[] labels) =>
@@ -159,14 +162,15 @@ public class MaintenanceChecklistEndpointTests : IClassFixture<ApiWebApplication
     {
         var h = CreateHarness();
 
-        var response = await h.Client.PostAsync(Url, Json(CreateBody(labels: new[] { "Hoses checked", " ", "Pressure recorded" })));
+        var response = await h.Client.PostAsync(Url, Json(CreateBody()));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         Assert.NotNull(response.Headers.Location);
         var data = (await Root(response)).GetProperty("data");
         Assert.Equal("CHK-0004", data.GetProperty("checklistCode").GetString());
         Assert.True(data.GetProperty("isActive").GetBoolean());
-        Assert.Equal(2, data.GetProperty("items").GetArrayLength());
+        Assert.Equal(2, data.GetProperty("items").GetArrayLength()); // the Checklist Master's items
+        Assert.Equal(MaintenanceChecklistTestData.DefaultMasterId, data.GetProperty("sourceChecklistId").GetInt32());
         Assert.Equal(4, h.Checklists.Count);
         Assert.Equal(new[] { "ChecklistCreated", "MachinePmScheduled" }, h.Audit.Entries.Select(e => e.Action)); // Machine checklist -> first occurrence
         var entry = h.Audit.Entries[0];
@@ -180,7 +184,7 @@ public class MaintenanceChecklistEndpointTests : IClassFixture<ApiWebApplication
         var h = CreateHarness();
 
         var response = await h.Client.PostAsync(Url, Json(
-            """{"checklistName":"Belt Check","appliesTo":"Machine","frequency":"Daily","machineId":1,"startDate":"2026-03-01","checklistId":99,"checklistCode":"HACK","isActive":false,"createdBy":42,"rowVersion":"AAAA","items":[{"itemLabel":"Belt tension","checklistItemId":5,"sortOrder":77}]}"""));
+            """{"checklistName":"Belt Check","appliesTo":"Mold","frequency":"Daily","startDate":"2026-03-01","checklistId":99,"checklistCode":"HACK","isActive":false,"createdBy":42,"rowVersion":"AAAA","items":[{"itemLabel":"Belt tension","checklistItemId":5,"sortOrder":77}]}"""));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var stored = h.Checklists.Stored(4);
@@ -359,6 +363,74 @@ public class MaintenanceChecklistEndpointTests : IClassFixture<ApiWebApplication
         Assert.Equal(HttpStatusCode.OK, (await h.Client.PutAsync($"{Url}/2", Json(UpdateBody(Rv(h, 2))))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await h.Client.DeleteAsync($"{Url}/2")).StatusCode);
         Assert.True(h.Checklists.Stored(2).IsActive);
+    }
+
+    // ================================================================ checklist masters (migration 020)
+
+    [Fact]
+    public async Task MasterOptions_Return200_ActiveMachineMastersWithItems()
+    {
+        var h = CreateHarness();
+
+        var response = await h.Client.GetAsync($"{Url}/masters/options?appliesTo=Machine");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var data = (await Root(response)).GetProperty("data").EnumerateArray().ToList();
+        Assert.Equal(new[] { "CHK-0901", "CHK-0904", "CHK-0905" }, data.Select(o => o.GetProperty("checklistCode").GetString()));
+        var weekly = data.Single(o => o.GetProperty("checklistId").GetInt32() == MaintenanceChecklistTestData.WeeklyMasterId);
+        Assert.Equal("Weekly Machine Maintenance", weekly.GetProperty("checklistName").GetString());
+        Assert.Equal(4, weekly.GetProperty("items").GetArrayLength());
+        Assert.Equal(HttpStatusCode.BadRequest, (await h.Client.GetAsync($"{Url}/masters/options?appliesTo=Tool")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Masters_ListCreateAndUpdate_ThroughHttp_AndPlansListStaysPlansOnly()
+    {
+        var h = CreateHarness();
+
+        var created = await h.Client.PostAsync($"{Url}/masters", Json("""{"checklistName":"Monthly Hydraulics","appliesTo":"Machine","items":[{"itemLabel":"Hoses checked"}],"frequency":"Daily","machineId":1}"""));
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var data = (await Root(created)).GetProperty("data");
+        Assert.True(data.GetProperty("isChecklistMaster").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("frequency").ValueKind); // plan fields are not part of a master
+        var id = data.GetProperty("checklistId").GetInt32();
+        Assert.Empty(h.Checklists.Pms);
+
+        var updated = await h.Client.PutAsync($"{Url}/masters/{id}", Json(JsonSerializer.Serialize(new
+        {
+            checklistName = "Monthly Hydraulics", appliesTo = "Machine", items = ItemsOf("Hoses checked", "Pressure recorded"), rowVersion = Rv(h, id),
+        })));
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        Assert.Equal(2, (await Root(updated)).GetProperty("data").GetProperty("items").GetArrayLength());
+
+        var masters = (await Root(await h.Client.GetAsync($"{Url}/masters?pageSize=50"))).GetProperty("data");
+        Assert.Equal(6, masters.GetProperty("totalCount").GetInt32());
+        var plans = (await Root(await h.Client.GetAsync(Url))).GetProperty("data");
+        Assert.Equal(3, plans.GetProperty("totalCount").GetInt32());
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await h.Client.PutAsync($"{Url}/masters/1", Json(JsonSerializer.Serialize(new
+        {
+            checklistName = "x", appliesTo = "Machine", items = ItemsOf("x"), rowVersion = Rv(h, 1),
+        })))).StatusCode); // plan 1 is not a master
+    }
+
+    [Fact]
+    public async Task Masters_UseTheChecklistPermissions_PerAction()
+    {
+        var h = CreateHarness(decide: (_, module, action) => module == ModuleCodes.MasterMaintenanceChecklist && action == PermissionAction.View);
+
+        Assert.Equal(HttpStatusCode.OK, (await h.Client.GetAsync($"{Url}/masters/options")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await h.Client.GetAsync($"{Url}/masters")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await h.Client.PostAsync($"{Url}/masters", Json("""{"checklistName":"X","appliesTo":"Machine","items":[{"itemLabel":"a"}]}"""))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await h.Client.PutAsync($"{Url}/masters/901", Json(JsonSerializer.Serialize(new
+        {
+            checklistName = "X", appliesTo = "Machine", items = ItemsOf("a"), rowVersion = Rv(h, 901),
+        })))).StatusCode);
+        Assert.Equal(0, h.Checklists.AddCalls);
+        Assert.Equal(0, h.Checklists.UpdateCalls);
+
+        var none = CreateHarness(permissionGranted: false);
+        Assert.Equal(HttpStatusCode.Forbidden, (await none.Client.GetAsync($"{Url}/masters/options")).StatusCode);
     }
 
     [Fact]

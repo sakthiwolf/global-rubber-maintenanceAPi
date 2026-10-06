@@ -24,9 +24,11 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
     }
 
     public async Task<(IReadOnlyList<MaintenanceChecklist> Items, int TotalCount)> GetAllAsync(
-        MaintenanceChecklistListQuery request, CancellationToken cancellationToken)
+        MaintenanceChecklistListQuery request, bool checklistMasters, CancellationToken cancellationToken)
     {
-        var query = _dbContext.MaintenanceChecklists.AsNoTracking();
+        // Migration 020: a checklist master has no frequency; every plan has one (CK_maintenance_checklist_master_active_config).
+        var query = _dbContext.MaintenanceChecklists.AsNoTracking()
+            .Where(c => checklistMasters ? c.Frequency == null : c.Frequency != null);
 
         if (request.IsActive is { } isActive)
         {
@@ -68,6 +70,7 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
             .Include(c => c.Machine)
             .Include(c => c.MaintenanceType)
             .Include(c => c.Items.OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId))
+            .Include(c => c.SourceChecklist!.Items.OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId))
             .ToListAsync(cancellationToken);
 
         return (items, totalCount);
@@ -79,7 +82,18 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
             .Include(c => c.Machine)
             .Include(c => c.MaintenanceType)
             .Include(c => c.Items.OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId))
+            .Include(c => c.SourceChecklist!.Items.OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId))
             .FirstOrDefaultAsync(c => c.ChecklistId == checklistId, cancellationToken);
+
+    public async Task<IReadOnlyList<MaintenanceChecklist>> GetActiveChecklistMastersAsync(string appliesTo, CancellationToken cancellationToken) =>
+        await _dbContext.MaintenanceChecklists.AsNoTracking()
+            .Where(c => c.Frequency == null && c.IsActive && c.AppliesTo == appliesTo)
+            .OrderBy(c => c.ChecklistCode)
+            .Include(c => c.Items.OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId))
+            .ToListAsync(cancellationToken);
+
+    public Task<bool> IsChecklistMasterUsedAsync(int checklistMasterId, CancellationToken cancellationToken) =>
+        _dbContext.MaintenanceChecklists.AsNoTracking().AnyAsync(c => c.SourceChecklistId == checklistMasterId, cancellationToken);
 
     public Task<bool> ExistsActiveByNameAsync(string name, int? excludeChecklistId, CancellationToken cancellationToken)
     {
@@ -255,6 +269,7 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
                 MachineId = checklist.MachineId,
                 StartDate = checklist.StartDate,
                 MaintenanceTypeId = checklist.MaintenanceTypeId,
+                SourceChecklistId = checklist.SourceChecklistId,
                 UpdatedAt = checklist.UpdatedAt,
                 UpdatedBy = checklist.UpdatedBy,
             };
@@ -273,6 +288,7 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
             entry.Property(c => c.MachineId).IsModified = true;
             entry.Property(c => c.StartDate).IsModified = true;
             entry.Property(c => c.MaintenanceTypeId).IsModified = true;
+            entry.Property(c => c.SourceChecklistId).IsModified = true;
             entry.Property(c => c.UpdatedAt).IsModified = true;
             entry.Property(c => c.UpdatedBy).IsModified = true;
 

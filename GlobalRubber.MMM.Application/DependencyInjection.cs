@@ -27,9 +27,14 @@ public static class DependencyInjection
         services.AddScoped<IProductionEntryService, ProductionEntryService>();
         services.AddScoped<IMachinePmService, MachinePmService>();
         services.AddScoped<IMoldPmService, MoldPmService>();
+        services.AddScoped<IManualPmService, ManualPmService>(); // migration 025
         services.AddScoped<IMoldPmEvaluator, MoldPmEvaluator>();
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<INotificationPublisher, NotificationPublisher>();
+        services.AddScoped<IMachinePmNotificationScanner, MachinePmNotificationScanner>();
+        // One recorder per request, reachable both through the interface (writers) and as itself (the realtime push).
+        services.AddScoped<NotificationChangeSignal>();
+        services.AddScoped<INotificationChangeSignal>(sp => sp.GetRequiredService<NotificationChangeSignal>());
         services.AddScoped<ISparePartUsageService, SparePartUsageService>();
         services.AddScoped<IMachineBreakdownService, MachineBreakdownService>();
         services.AddScoped<IMachineReportService, MachineReportService>();

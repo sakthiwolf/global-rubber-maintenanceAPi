@@ -46,6 +46,15 @@ public sealed class MoldPmDto
     public string? Remarks { get; init; }
     public string Status { get; init; } = string.Empty;
 
+    /// <summary>Migration 025: Automatic (usage-based) or Manual (one-time, category 'Scheduled').</summary>
+    public string ScheduleType { get; init; } = string.Empty;
+
+    /// <summary>Migration 025: the reason / name of a manual PM; null for Automatic.</summary>
+    public string? Title { get; init; }
+
+    /// <summary>Migration 025: the checklist snapshot of a manual PM (empty for the automatic PM).</summary>
+    public IReadOnlyList<MoldPmChecklistItemDto> ChecklistItems { get; init; } = Array.Empty<MoldPmChecklistItemDto>();
+
     /// <summary>True for a PM the system created automatically (created_by NULL).</summary>
     public bool CreatedBySystem { get; init; }
 
@@ -132,6 +141,12 @@ public sealed class CompleteMoldPmRequest
     /// <summary>Optional, at most 1000 characters (remarks NVARCHAR(1000)).</summary>
     public string? Remarks { get; init; }
 
+    /// <summary>
+    /// Migration 025 - a manual PM's checklist: the ticked state of its lines (unlisted lines = unchecked; unchecked lines are
+    /// allowed, as on Machine PM). A PM without checklist lines accepts none.
+    /// </summary>
+    public IReadOnlyList<MoldPmChecklistResultRequest>? Results { get; init; }
+
     public string? RowVersion { get; init; }
 }
 
@@ -139,4 +154,20 @@ public sealed class CompleteMoldPmRequest
 public sealed class StartMoldPmRequest
 {
     public string? RowVersion { get; init; }
+}
+
+/// <summary>One checklist line of a manual mold PM (migration 025).</summary>
+public sealed class MoldPmChecklistItemDto
+{
+    public int MoldPmChecklistId { get; init; }
+    public int SortOrder { get; init; }
+    public string ItemLabel { get; init; } = string.Empty;
+    public bool IsChecked { get; init; }
+}
+
+/// <summary>The ticked state of one checklist line on completion (migration 025).</summary>
+public sealed class MoldPmChecklistResultRequest
+{
+    public int MoldPmChecklistId { get; init; }
+    public bool IsChecked { get; init; }
 }

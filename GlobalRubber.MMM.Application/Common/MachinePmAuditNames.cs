@@ -9,4 +9,7 @@ public static class MachinePmAuditNames
     public const string Module = "Machine Preventive Maintenance";
     public const string EntityName = "MachinePm";
     public const string Scheduled = "MachinePmScheduled";
+
+    /// <summary>Migration 025: a user scheduled a manual (one-time) machine PM.</summary>
+    public const string ManualScheduled = "MachinePmManualScheduled";
 }

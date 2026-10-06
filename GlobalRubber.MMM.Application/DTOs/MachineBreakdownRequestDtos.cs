@@ -53,6 +53,9 @@ public sealed class MachineBreakdownListQuery
     public string? Stage { get; init; }
 
     public int? MachineId { get; init; }
+
+    /// <summary>true = only breakdowns that are not Closed (the machine's active breakdowns).</summary>
+    public bool? ActiveOnly { get; init; }
 }
 
 /// <summary>
@@ -64,8 +67,14 @@ public sealed class AdvanceMachineBreakdownStageRequest
     /// <summary>The new stage to move to. Must be the next valid stage.</summary>
     public string? Stage { get; init; }
 
-    /// <summary>For the Assigned stage: the engineer being assigned.</summary>
+    /// <summary>For the Assigned stage: the engineer being assigned (an existing, active employee).</summary>
     public int? AssignedEngineerId { get; init; }
+
+    /// <summary>
+    /// For the Assigned stage (migration 021): the person's name when they are not in the employee master (max 100).
+    /// Never together with <see cref="AssignedEngineerId"/>; no employee record is created from it.
+    /// </summary>
+    public string? AssignedToName { get; init; }
 
     /// <summary>For the Resolved stage.</summary>
     public string? RootCause { get; init; }
@@ -74,5 +83,14 @@ public sealed class AdvanceMachineBreakdownStageRequest
     public string? CorrectiveAction { get; init; }
 
     /// <summary>Optimistic concurrency token from the last read.</summary>
+    public string? RowVersion { get; init; }
+}
+
+/// <summary>
+/// Body of PUT /api/v1/machine-breakdowns/{id}/reopen - reopens a Closed breakdown (back to Resolved). Requires the
+/// rowVersion from the last read.
+/// </summary>
+public sealed class ReopenMachineBreakdownRequest
+{
     public string? RowVersion { get; init; }
 }

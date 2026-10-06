@@ -1,5 +1,7 @@
 using GlobalRubber.MMM.Domain.Common;
 
+using GlobalRubber.MMM.Domain.Constants;
+
 namespace GlobalRubber.MMM.Domain.Entities;
 
 /// <summary>
@@ -42,5 +44,17 @@ public class MoldPm : AuditableEntity
     public string? Remarks { get; set; }
     public string Status { get; set; } = string.Empty;
 
+    /// <summary>Migration 025: Automatic (Shot-based) or Manual (one-time, category 'Scheduled' - see <see cref="PmScheduleType"/>).</summary>
+    public string ScheduleType { get; set; } = PmScheduleType.Automatic;
+
+    /// <summary>Migration 025: the reason / name of a manual PM (required for Manual, null for Automatic).</summary>
+    public string? Title { get; set; }
+
     public Mold Mold { get; set; } = null!;
+
+    /// <summary>
+    /// Checklist snapshot (transactions.mold_pm_checklist_transaction) - only a MANUAL mold PM has one (migration 025);
+    /// the automatic usage-based PM never has a checklist.
+    /// </summary>
+    public List<MoldPmChecklistItem> ChecklistItems { get; set; } = new();
 }

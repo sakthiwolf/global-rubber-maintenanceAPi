@@ -10,11 +10,12 @@ public sealed class MachineDto
     public string MachineCode { get; init; } = string.Empty;
     public string MachineName { get; init; } = string.Empty;
     public string MachineType { get; init; } = string.Empty;
-    public int DepartmentId { get; init; }
-    public string DepartmentName { get; init; } = string.Empty;
+    /// <summary>Null when the machine has no department (migration 023).</summary>
+    public int? DepartmentId { get; init; }
+    public string? DepartmentName { get; init; }
 
-    /// <summary>Whether the machine's department is still active - lets a form keep an inactive one visible, flagged.</summary>
-    public bool DepartmentIsActive { get; init; }
+    /// <summary>Whether the machine's department is still active - lets a form keep an inactive one visible, flagged. Null without a department.</summary>
+    public bool? DepartmentIsActive { get; init; }
 
     public string Location { get; init; } = string.Empty;
     public string? Manufacturer { get; init; }
@@ -22,6 +23,15 @@ public sealed class MachineDto
     public string? SerialNumber { get; init; }
     public string? Capacity { get; init; }
     public DateOnly? InstallationDate { get; init; }
+
+    /// <summary>F01 "Range" (machine_range NVARCHAR(100)); optional.</summary>
+    public string? MachineRange { get; init; }
+
+    /// <summary>F01 "Ownership" (ownership NVARCHAR(100)); optional.</summary>
+    public string? Ownership { get; init; }
+
+    /// <summary>F01 "Month &amp; Year of Purchase" (purchase_date DATE, yyyy-MM-dd); optional, separate from InstallationDate.</summary>
+    public DateOnly? PurchaseDate { get; init; }
     public int MaintenanceFrequencyDays { get; init; }
 
     // Responsible Engineer temporarily disabled. Database field and relationship intentionally retained for future re-enablement.

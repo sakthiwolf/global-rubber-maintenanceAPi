@@ -55,6 +55,8 @@ public class MachineBreakdownEndpointTests : IClassFixture<ApiWebApplicationFact
                 services.AddSingleton<IMachineBreakdownRepository>(breakdowns);
                 services.RemoveAll<IMachineRepository>();
                 services.AddSingleton<IMachineRepository>(machines);
+                services.RemoveAll<IEmployeeRepository>();
+                services.AddSingleton<IEmployeeRepository>(employees);
                 services.RemoveAll<IUserRepository>();
                 services.AddSingleton<IUserRepository>(users);
                 services.RemoveAll<IAuditLogService>();
@@ -128,7 +130,9 @@ public class MachineBreakdownEndpointTests : IClassFixture<ApiWebApplicationFact
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var data = (await Root(response)).GetProperty("data");
-        Assert.Equal("18:54", data.GetProperty("breakdownTime").GetString());
+        // The request may omit seconds; the response always uses the API's time format HH:mm:ss (TimeOnly converter,
+        // and the frontend model BackendMachineBreakdown.breakdownTime documents HH:mm:ss).
+        Assert.Equal("18:54:00", data.GetProperty("breakdownTime").GetString());
     }
 
     [Fact]
@@ -292,6 +296,137 @@ public class MachineBreakdownEndpointTests : IClassFixture<ApiWebApplicationFact
         var response = await h.Client.PutAsync(Url + "/1/advance-stage", Json(body));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    private async Task<HttpResponseMessage> AdvanceAsync(H h, int id, object extra)
+    {
+        var rv = (await Root(await h.Client.GetAsync($"{Url}/{id}"))).GetProperty("data").GetProperty("rowVersion").GetString()!;
+        var body = JsonSerializer.Serialize(extra).TrimEnd('}') + $",\"rowVersion\":\"{rv}\"}}";
+        return await h.Client.PutAsync($"{Url}/{id}/advance-stage", Json(body));
+    }
+
+    [Fact]
+    public async Task AdvanceStage_AssignsAnEngineer_OrRefusesAnUnknown404_OrInactive400()
+    {
+        var h = CreateHarness();
+
+        Assert.Equal(HttpStatusCode.NotFound, (await AdvanceAsync(h, 1, new { stage = "Assigned", assignedEngineerId = 999 })).StatusCode);
+        var inactive = await AdvanceAsync(h, 1, new { stage = "Assigned", assignedEngineerId = 3 });
+        Assert.Equal(HttpStatusCode.BadRequest, inactive.StatusCode);
+        Assert.Contains("The selected engineer is not active.", await inactive.Content.ReadAsStringAsync());
+
+        var ok = await AdvanceAsync(h, 1, new { stage = "Assigned", assignedEngineerId = 1 });
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        var data = (await Root(ok)).GetProperty("data");
+        Assert.Equal((1, "Ravi Kumar"), (data.GetProperty("assignedEngineerId").GetInt32(), data.GetProperty("assignedEngineerName").GetString()));
+    }
+
+    [Fact]
+    public async Task AdvanceStage_RootCauseOver1000_Is400_NotA500()
+    {
+        var h = CreateHarness();
+        Assert.Equal(HttpStatusCode.OK, (await AdvanceAsync(h, 2, new { stage = "Maintenance Started" })).StatusCode);
+
+        var response = await AdvanceAsync(h, 2, new { stage = "Resolved", rootCause = new string('r', 1001), correctiveAction = new string('c', 1001) });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.Contains("RootCause must be at most 1000 characters.", text);
+        Assert.Contains("CorrectiveAction must be at most 1000 characters.", text);
+    }
+
+    [Fact]
+    public async Task AdvanceStage_OnAClosedBreakdown_Is409()
+    {
+        var h = CreateHarness();
+        foreach (var stage in new[] { "Maintenance Started", "Resolved", "Closed" })
+        {
+            Assert.Equal(HttpStatusCode.OK, (await AdvanceAsync(h, 2, new { stage })).StatusCode);
+        }
+
+        var response = await AdvanceAsync(h, 2, new { stage = "Closed" });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("already closed", await response.Content.ReadAsStringAsync());
+    }
+
+    [Theory]
+    [InlineData("?pageNumber=0&pageSize=10")]
+    [InlineData("?pageNumber=-5&pageSize=10")]
+    [InlineData("?pageNumber=1&pageSize=0")]
+    [InlineData("?pageNumber=1&pageSize=101")]
+    public async Task GetAll_InvalidPaging_Is400(string queryString)
+    {
+        var h = CreateHarness();
+
+        var response = await h.Client.GetAsync(Url + queryString);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    private async Task CloseBreakdown2(H h)
+    {
+        foreach (var stage in new[] { "Maintenance Started", "Resolved", "Closed" })
+        {
+            Assert.Equal(HttpStatusCode.OK, (await AdvanceAsync(h, 2, new { stage })).StatusCode);
+        }
+    }
+
+    private async Task<HttpResponseMessage> ReopenAsync(H h, int id)
+    {
+        var rv = (await Root(await h.Client.GetAsync($"{Url}/{id}"))).GetProperty("data").GetProperty("rowVersion").GetString()!;
+        return await h.Client.PutAsync($"{Url}/{id}/reopen", Json(JsonSerializer.Serialize(new { rowVersion = rv })));
+    }
+
+    [Fact]
+    public async Task Reopen_RequiresApprove_EditAloneIs403()
+    {
+        var h = CreateHarness(decide: (_, module, action) => module == ModuleCodes.TrnMachineBreakdown && action != PermissionAction.Approve);
+        await CloseBreakdown2(h);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await ReopenAsync(h, 2)).StatusCode);
+        Assert.Equal("Closed", h.Breakdowns.Stored(2).Stage);
+        Assert.Contains(h.Authorization.Checks, c => c.ModuleCode == ModuleCodes.TrnMachineBreakdown && c.Action == PermissionAction.Approve);
+    }
+
+    [Fact]
+    public async Task Reopen_WithApprove_Returns200_BackToResolved_AndAudits()
+    {
+        var h = CreateHarness();
+        await CloseBreakdown2(h);
+
+        var response = await ReopenAsync(h, 2);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var data = (await Root(response)).GetProperty("data");
+        Assert.Equal(("Resolved", "BRK-0002"), (data.GetProperty("stage").GetString(), data.GetProperty("breakdownNo").GetString()));
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("closedAt").ValueKind);
+        Assert.Equal(BreakdownAuditNames.Reopened, h.Audit.Entries.Last().Action);
+        Assert.Equal(HttpStatusCode.Conflict, (await ReopenAsync(h, 2)).StatusCode); // no longer Closed
+    }
+
+    [Fact]
+    public async Task Assign_ByTypedName_IsStoredAsText()
+    {
+        var h = CreateHarness();
+
+        var ok = await AdvanceAsync(h, 1, new { stage = "Assigned", assignedToName = "Outside Contractor" });
+
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        var data = (await Root(ok)).GetProperty("data");
+        Assert.Equal("Outside Contractor", data.GetProperty("assignedToName").GetString());
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("assignedEngineerId").ValueKind);
+    }
+
+    [Fact]
+    public async Task GetAll_ActiveOnly_LeavesOutClosedBreakdowns()
+    {
+        var h = CreateHarness();
+        await CloseBreakdown2(h);
+
+        var items = (await Root(await h.Client.GetAsync($"{Url}?activeOnly=true"))).GetProperty("data").GetProperty("items");
+
+        Assert.Equal(new[] { "BRK-0001" }, items.EnumerateArray().Select(i => i.GetProperty("breakdownNo").GetString()));
     }
 
     [Fact]

@@ -23,10 +23,10 @@ public class MaintenanceChecklistConfigurationServiceTests
         var departments = new InMemoryDepartmentRepository(DepartmentTestData.Departments());
         var employees = new InMemoryEmployeeRepository(EmployeeTestData.Employees(), departments);
         var machineList = MachineTestData.Machines();
-        var checklists = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList);
+        var checklists = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.All(), machineList);
         var audit = new RecordingAuditLog();
         var service = new MaintenanceChecklistService(checklists, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()), users,
-            new FixedClock(), audit, NullLogger<MaintenanceChecklistService>.Instance);
+            new FixedClock(), audit, new RecordingNotificationPublisher(), NullLogger<MaintenanceChecklistService>.Instance);
         return new Sut(service, checklists, audit, machineList);
     }
 
@@ -34,7 +34,13 @@ public class MaintenanceChecklistConfigurationServiceTests
         labels.Select(l => new MaintenanceChecklistItemRequest { ItemLabel = l }).ToList();
 
     private static CreateMaintenanceChecklistRequest New(string appliesTo = "Machine", string? frequency = "Daily", int? machineId = 1, string name = "Injection Machine Daily Inspection") =>
-        new() { ChecklistName = name, AppliesTo = appliesTo, Frequency = frequency, MachineId = machineId, StartDate = new DateOnly(2026, 3, 1), Items = Items("Oil level checked", "Hydraulic pressure checked") };
+        new()
+        {
+            ChecklistName = name, AppliesTo = appliesTo, Frequency = frequency, MachineId = machineId, StartDate = new DateOnly(2026, 3, 1),
+            // Migration 020: a Machine plan uses Checklist Master 901; a Mold plan keeps its own items.
+            SourceChecklistId = appliesTo == "Machine" ? MaintenanceChecklistTestData.DefaultMasterId : null,
+            Items = appliesTo == "Machine" ? null : Items("Oil level checked", "Hydraulic pressure checked"),
+        };
 
     private static UpdateMaintenanceChecklistRequest Edit(Sut s, int id, string? appliesTo = null, string? frequency = "(keep)", int? machineId = -1, string? name = null) =>
         new()
@@ -44,7 +50,13 @@ public class MaintenanceChecklistConfigurationServiceTests
             Frequency = frequency == "(keep)" ? s.Checklists.Stored(id).Frequency : frequency,
             MachineId = machineId == -1 ? s.Checklists.Stored(id).MachineId : machineId,
             StartDate = s.Checklists.Stored(id).StartDate ?? new DateOnly(2026, 3, 1),
-            Items = Items(s.Checklists.Stored(id).Items.OrderBy(i => i.SortOrder).Select(i => i.ItemLabel).ToArray()),
+            // Migration 020: a Machine plan keeps its Checklist Master (Mold -> Machine picks master 901); a Mold plan has its own items.
+            SourceChecklistId = (appliesTo ?? s.Checklists.Stored(id).AppliesTo) != "Machine" ? null
+                : s.Checklists.Stored(id).SourceChecklistId ?? (s.Checklists.Stored(id).AppliesTo == "Mold" ? MaintenanceChecklistTestData.DefaultMasterId : null),
+            Items = (appliesTo ?? s.Checklists.Stored(id).AppliesTo) != "Machine" ? Items(s.Checklists.EffectiveLabels(id))
+                : s.Checklists.Stored(id).SourceChecklistId is null && s.Checklists.Stored(id).AppliesTo == "Machine"
+                    ? Items(s.Checklists.Stored(id).Items.OrderBy(i => i.SortOrder).Select(i => i.ItemLabel).ToArray())
+                    : null,
             RowVersion = Convert.ToBase64String(s.Checklists.Stored(id).RowVersion),
         };
 
@@ -72,7 +84,7 @@ public class MaintenanceChecklistConfigurationServiceTests
         Assert.Equal(("Daily", (int?)1), (stored.Frequency, stored.MachineId));
         Assert.Equal(new[] { "ChecklistCreated", "MachinePmScheduled" }, s.Audit.Entries.Select(e => e.Action)); // Function 3: first occurrence
         var entry = s.Audit.Entries[0];
-        Assert.Contains("created daily checklist 'Injection Machine Daily Inspection' (CHK-0004) for machine MAC-0001 starting 2026-03-01 with 2 items.", entry.Description);
+        Assert.Contains("created daily checklist 'Injection Machine Daily Inspection' (CHK-0004) for machine MAC-0001 starting 2026-03-01 using checklist master CHK-0901 (2 items).", entry.Description);
     }
 
     [Theory]
@@ -190,7 +202,7 @@ public class MaintenanceChecklistConfigurationServiceTests
         Assert.Equal(new[]
         {
             "ChecklistName must be at most 150 characters.", "Frequency is required.", "MachineId is required for a Machine checklist.",
-            "StartDate is required for a Machine checklist.", "Checklist item 1 must be at most 200 characters.",
+            "StartDate is required for a Machine checklist.", "Checklist Master is required for a Machine plan.", // migration 020: no own items
         }, ex.Errors);
         AssertNothingCreated(s);
     }
@@ -275,17 +287,22 @@ public class MaintenanceChecklistConfigurationServiceTests
 
     // ================================================================ update: inactive legacy checklists (9, 10)
 
-    [Fact] // 9 + 10
-    public async Task Update_InactiveLegacyChecklist_MayKeepANullFrequencyAndANullMachine()
+    [Fact] // 9 + 10, revised by migration 020: an inactive plan may keep a null machine, but never loses its frequency
+    public async Task Update_InactiveLegacyChecklist_MayKeepANullMachine_ButAlwaysKeepsAFrequency()
     {
         var s = Create();
 
-        var dto = await s.Service.UpdateAsync(3, Edit(s, 3, name: "Old Checklist (legacy)", frequency: null, machineId: null), 1, null, CancellationToken.None);
+        var dto = await s.Service.UpdateAsync(3, Edit(s, 3, name: "Old Checklist (legacy)", machineId: null), 1, null, CancellationToken.None);
 
         Assert.False(dto.IsActive);
-        Assert.Equal(((string?)null, (int?)null), (dto.Frequency, dto.MachineId));
+        Assert.Equal(("Monthly", (int?)null), (dto.Frequency, dto.MachineId));
         Assert.Equal("Old Checklist (legacy)", s.Checklists.Stored(3).ChecklistName);
         Assert.False(s.Checklists.Stored(3).IsActive); // never reactivated by an edit
+
+        // A row without a frequency is a Checklist Master - a plan can never become one by an edit.
+        var noFrequency = await Invalid(() => s.Service.UpdateAsync(3, Edit(s, 3, frequency: null), 1, null, CancellationToken.None));
+        Assert.Contains("Frequency is required.", noFrequency.Errors);
+        Assert.Equal("Monthly", s.Checklists.Stored(3).Frequency);
     }
 
     [Fact]
@@ -335,7 +352,7 @@ public class MaintenanceChecklistConfigurationServiceTests
         Assert.Empty(await Codes(new MaintenanceChecklistListQuery { Frequency = "Hourly" }));
 
         var legacy = await s.Service.GetByIdAsync(3, CancellationToken.None);
-        Assert.Equal(((string?)null, (int?)null, false), (legacy.Frequency, legacy.MachineId, legacy.IsActive));
+        Assert.Equal(("Monthly", (int?)null, false), (legacy.Frequency, legacy.MachineId, legacy.IsActive)); // migration 020: a plan always has a frequency
     }
 
     [Fact]

@@ -34,6 +34,7 @@ public class GlobalRubberDbContext : DbContext
     public DbSet<MachinePm> MachinePms => Set<MachinePm>();
     public DbSet<MachinePmChecklistItem> MachinePmChecklistItems => Set<MachinePmChecklistItem>();
     public DbSet<MoldPm> MoldPms => Set<MoldPm>();
+    public DbSet<MoldPmChecklistItem> MoldPmChecklistItems => Set<MoldPmChecklistItem>(); // migration 025 (manual mold PMs)
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<NotificationRead> NotificationReads => Set<NotificationRead>();
     public DbSet<SparePartUsage> SparePartUsages => Set<SparePartUsage>();

@@ -19,16 +19,18 @@ public interface IMachineBreakdownRepository
 
     /// <summary>
     /// Inserts the breakdown and increments the MACHINE_BREAKDOWN sequence in a single transaction.
-    /// The document number is assigned by this method.
+    /// The document number is assigned by this method. When <paramref name="machinePlan"/> is given, the machine row is
+    /// locked first and the plan's machine change is saved in the same transaction (BR-16).
     /// </summary>
     /// <exception cref="ConflictException">If the generated breakdown number already exists (sequence/table mismatch).</exception>
-    Task<MachineBreakdown> AddAsync(MachineBreakdown breakdown, CancellationToken cancellationToken);
+    Task<MachineBreakdown> AddAsync(MachineBreakdown breakdown, BreakdownMachineStatusPlan? machinePlan, CancellationToken cancellationToken);
 
     /// <summary>
     /// Updates the breakdown's stage and related fields in a single transaction.
-    /// Uses optimistic concurrency (row_version).
+    /// Uses optimistic concurrency (row_version). When <paramref name="machinePlan"/> is given, the machine row is locked
+    /// first and the plan's machine change is saved in the same transaction (BR-20).
     /// </summary>
     /// <exception cref="ConflictException">If the row was modified concurrently.</exception>
     Task<MachineBreakdown> UpdateStageAsync(
-        MachineBreakdown breakdown, byte[] originalRowVersion, CancellationToken cancellationToken);
+        MachineBreakdown breakdown, byte[] originalRowVersion, BreakdownMachineStatusPlan? machinePlan, CancellationToken cancellationToken);
 }

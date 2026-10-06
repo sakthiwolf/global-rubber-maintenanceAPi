@@ -9,19 +9,43 @@ namespace GlobalRubber.MMM.Api.Controllers;
 
 /// <summary>
 /// Machine preventive-maintenance endpoints (transactions.machine_pm_transaction + its checklist snapshot): bucketed list,
-/// tab counts, details, lookups and complete. Occurrences are created by the Maintenance Checklist (first occurrence) and
-/// by completion (the successor) - there is no manual scheduling endpoint (removed with the recurring workflow,
-/// 2026-09-25). Every endpoint requires a TrnMachinePm permission via [RequirePermission] - never a role-name check: View
-/// for reads, Edit to complete (PUT because every POST in the API is an Add). No start, edit, cancel or delete endpoint.
+/// tab counts, details, lookups and complete. Automatic occurrences are created by the Maintenance Checklist (first
+/// occurrence) and by completion (the successor); POST .../manual schedules ONE manual (one-time) PM (migration 025). Every
+/// endpoint requires a TrnMachinePm permission via [RequirePermission] - never a role-name check: View for reads, Add for
+/// the manual schedule, Edit to complete (PUT because every POST in the API is an Add). No start, edit, cancel or delete
+/// endpoint.
 /// </summary>
 [Route("api/v1/machine-maintenance")]
 public sealed class MachinePmController : BaseApiController
 {
     private readonly IMachinePmService _machinePmService;
+    private readonly IManualPmService _manualPmService;
 
-    public MachinePmController(IMachinePmService machinePmService)
+    public MachinePmController(IMachinePmService machinePmService, IManualPmService manualPmService)
     {
         _machinePmService = machinePmService;
+        _manualPmService = manualPmService;
+    }
+
+    /// <summary>
+    /// Manual / One-Time schedule (migration 025): creates exactly ONE PM for the machine on the given date - no recurrence,
+    /// no successor, the machine's normal maintenance dates unchanged. 400 for a missing title / machine / date or an
+    /// inactive machine, type or Checklist Master; 404 for an unknown machine, type or master.
+    /// </summary>
+    [HttpPost("manual")]
+    [RequirePermission(ModuleCodes.TrnMachinePm, PermissionAction.Add)]
+    [ProducesResponseType(typeof(ApiResponse<MachinePmDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ApiResponse<MachinePmDto>>> ScheduleManual(
+        [FromBody] ScheduleManualMachinePmRequest request, CancellationToken cancellationToken)
+    {
+        var pm = await _manualPmService.ScheduleMachineAsync(
+            request, GetAuthenticatedUserId(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+
+        return CreatedAtAction(nameof(GetById), new { id = pm.MachinePmId }, ApiResponse<MachinePmDto>.Ok(pm, "Manual maintenance scheduled successfully."));
     }
 
     /// <summary>

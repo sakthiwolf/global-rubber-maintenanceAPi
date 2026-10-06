@@ -45,10 +45,11 @@ public class MaintenanceChecklistFirstOccurrenceTests
         var departments = new InMemoryDepartmentRepository(DepartmentTestData.Departments());
         var employees = new InMemoryEmployeeRepository(EmployeeTestData.Employees(), departments);
         var machineList = MachineTestData.Machines();
-        var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList, LivePms());
+        var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.All(), machineList, LivePms());
+        repo.SeedMaster("Machine", "Oil level checked", "Hydraulic pressure checked", "Electrical panel checked"); // InspectionMasterId
         var audit = new RecordingAuditLog();
         var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()), users,
-            new FixedClock(), audit, NullLogger<MaintenanceChecklistService>.Instance);
+            new FixedClock(), audit, new RecordingNotificationPublisher(), NullLogger<MaintenanceChecklistService>.Instance);
         return new Sut(service, repo, audit);
     }
 
@@ -56,8 +57,13 @@ public class MaintenanceChecklistFirstOccurrenceTests
         new()
         {
             ChecklistName = name, AppliesTo = appliesTo, Frequency = frequency, MachineId = machineId, StartDate = startDate ?? Today,
-            Items = new[] { "Oil level checked", "", "Hydraulic pressure checked", "Electrical panel checked" }.Select(l => new MaintenanceChecklistItemRequest { ItemLabel = l }).ToList(),
+            // Migration 020: a Machine plan uses Checklist Master 906 (seeded by Create with these three items); Mold keeps its own.
+            SourceChecklistId = appliesTo == "Machine" ? InspectionMasterId : null,
+            Items = appliesTo == "Machine" ? null
+                : new[] { "Oil level checked", "", "Hydraulic pressure checked", "Electrical panel checked" }.Select(l => new MaintenanceChecklistItemRequest { ItemLabel = l }).ToList(),
         };
+
+    private const int InspectionMasterId = 950; // the first SeedMaster id
 
     private static MachinePm NewOccurrence(Sut s) => s.Repo.Pms.Single(p => p.PmNo == "MPM-0007");
 
@@ -112,7 +118,7 @@ public class MaintenanceChecklistFirstOccurrenceTests
         var s = Create();
         var dto = await s.Service.CreateAsync(New(), 1, null, CancellationToken.None);
 
-        s.Repo.Stored(dto.ChecklistId).Items[0].ItemLabel = "Oil level checked (NEW WORDING)"; // the master changes later
+        s.Repo.Stored(InspectionMasterId).Items[0].ItemLabel = "Oil level checked (NEW WORDING)"; // the Checklist Master changes later
 
         Assert.Equal("Oil level checked", NewOccurrence(s).ChecklistItems[0].ItemLabel);
     }
@@ -263,10 +269,11 @@ public class MaintenanceChecklistFirstOccurrenceTests
         var departments = new InMemoryDepartmentRepository(DepartmentTestData.Departments());
         var employees = new InMemoryEmployeeRepository(EmployeeTestData.Employees(), departments);
         var machineList = MachineTestData.Machines();
-        var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.Checklists(), machineList, LivePms());
+        var repo = new InMemoryMaintenanceChecklistRepository(MaintenanceChecklistTestData.All(), machineList, LivePms());
+        repo.SeedMaster("Machine", "Oil level checked", "Hydraulic pressure checked", "Electrical panel checked"); // InspectionMasterId
         var failingAudit = new AuditLogService(new ThrowingAuditRepository(), new FixedClock(), NullLogger<AuditLogService>.Instance);
         var service = new MaintenanceChecklistService(repo, new InMemoryMachineRepository(machineList, departments, employees), new InMemoryMaintenanceTypeRepository(MaintenanceTypeTestData.MaintenanceTypes()),
-            new InMemoryUserRepository(UserTestData.Users(), roles.Find), new FixedClock(), failingAudit, NullLogger<MaintenanceChecklistService>.Instance);
+            new InMemoryUserRepository(UserTestData.Users(), roles.Find), new FixedClock(), failingAudit, new RecordingNotificationPublisher(), NullLogger<MaintenanceChecklistService>.Instance);
 
         var dto = await service.CreateAsync(New(), 1, null, CancellationToken.None);
 

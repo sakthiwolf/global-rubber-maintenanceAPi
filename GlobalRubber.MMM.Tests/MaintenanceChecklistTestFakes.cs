@@ -10,14 +10,50 @@ namespace GlobalRubber.MMM.Tests;
 /// <summary>Shared fakes for the maintenance checklist tests (service level and HTTP level).</summary>
 internal static class MaintenanceChecklistTestData
 {
+    // Plans (all created "before migration 020": no Checklist Master, their own items):
     // 1 Machine Lubrication (Machine, active, Daily, machine 1 MAC-0001, 2 items), 2 Mold Cleaning (Mold, active, Weekly,
-    // no machine, 1 item), 3 Old Checklist (Machine, INACTIVE legacy: no frequency, no machine - like the live CHK-0001).
-    // Machines are MachineTestData's: 1, 2 active; 3 inactive.
+    // no machine, 1 item), 3 Old Checklist (Machine, INACTIVE legacy: Weekly, no machine - like the live CHK-0001; since
+    // migration 020 every plan keeps a frequency - Monthly, so it never matches the other plans' filters). Machines are MachineTestData's: 1, 2 active; 3 inactive.
+    // Checklist Masters (migration 020: no frequency) - see Masters(); ids 900+ so plan ids/codes in older tests are unchanged.
     public static List<MaintenanceChecklist> Checklists() => new()
     {
         Checklist(1, "CHK-0001", "Machine Lubrication", "Machine", true, "Daily", 1, "Oil level checked", "Grease points lubricated"),
         Checklist(2, "CHK-0002", "Mold Cleaning", "Mold", true, "Weekly", null, "Cavities cleaned"),
-        Checklist(3, "CHK-0003", "Old Checklist", "Machine", false, null, null, "Legacy step"),
+        Checklist(3, "CHK-0003", "Old Checklist", "Machine", false, "Monthly", null, "Legacy step"),
+    };
+
+    /// <summary>The default Checklist Master a new Machine plan uses in the tests (its items are the old default plan items).</summary>
+    public const int DefaultMasterId = 901;
+    public const int InactiveMasterId = 902;
+    public const int MoldMasterId = 903;
+    public const int EmptyMasterId = 904;
+    public const int WeeklyMasterId = 905;
+
+    // 901 Machine Weekly Checks (Machine, active, 2 items), 902 Retired Checks (Machine, INACTIVE), 903 Mold Checks (Mold),
+    // 904 Empty Checks (Machine, active, NO items - cannot be created through the API, but must still be refused),
+    // 905 Weekly Machine Maintenance (Machine, active, 4 items - the example from the requirement).
+    public static List<MaintenanceChecklist> Masters() => new()
+    {
+        Master(DefaultMasterId, "CHK-0901", "Machine Weekly Checks", "Machine", true, "Hoses checked", "Pressure recorded"),
+        Master(InactiveMasterId, "CHK-0902", "Retired Checks", "Machine", false, "Old step"),
+        Master(MoldMasterId, "CHK-0903", "Mold Checks", "Mold", true, "Cavity cleaned"),
+        Master(EmptyMasterId, "CHK-0904", "Empty Checks", "Machine", true),
+        Master(WeeklyMasterId, "CHK-0905", "Weekly Machine Maintenance", "Machine", true,
+            "Oil level checked", "Lubrication checked", "Belt condition checked", "Safety guard checked"),
+    };
+
+    /// <summary>Plans plus Checklist Masters - what the table holds since migration 020.</summary>
+    public static List<MaintenanceChecklist> All() => Checklists().Concat(Masters()).ToList();
+
+    private static MaintenanceChecklist Master(int id, string code, string name, string appliesTo, bool active, params string[] labels) => new()
+    {
+        ChecklistId = id, ChecklistCode = code, ChecklistName = name, AppliesTo = appliesTo, IsActive = active,
+        CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), CreatedBy = 1, RowVersion = new byte[] { 1 },
+        Items = labels.Select((l, i) => new MaintenanceChecklistItem
+        {
+            ChecklistItemId = id * 10 + i, ChecklistId = id, SortOrder = i + 1, ItemLabel = l,
+            CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), CreatedBy = 1,
+        }).ToList(),
     };
 
     private static MaintenanceChecklist Checklist(int id, string code, string name, string appliesTo, bool active, string? frequency, int? machineId, params string[] labels) => new()
@@ -55,8 +91,11 @@ internal sealed class InMemoryMaintenanceChecklistRepository : IMaintenanceCheck
         _machines = machines ?? MachineTestData.Machines();
         Pms = pms ?? new List<MachinePm>();
         PmSequence = Pms.Count; // MACHINE_PM last_number: the seeded occurrences are MPM-0001..
-        _nextCode = checklists.Count + 1;
+        _nextCode = checklists.Count(c => c.ChecklistId < SeededMasterIds) + 1; // the 900+ seeded masters are outside the numbering
     }
+
+    // Test data convention: seeded Checklist Masters use ids 900+, so they never shift the ids / codes the older tests expect.
+    private const int SeededMasterIds = 900;
 
     /// <summary>Runs at the start of Update/Deactivate - lets a test play "another user saved first".</summary>
     public Action<int>? BeforeWrite { get; set; }
@@ -99,9 +138,30 @@ internal sealed class InMemoryMaintenanceChecklistRepository : IMaintenanceCheck
     public int UpdateCalls { get; private set; }
     public int DeactivateCalls { get; private set; }
     public bool? LastReplaceItems { get; private set; }
-    public int Count => _checklists.Count;
+    public int Count => _checklists.Count(c => c.ChecklistId < SeededMasterIds); // plans and masters the TEST created - not the seeded 900+ masters
 
     public MaintenanceChecklist Stored(int id) => _checklists.Single(c => c.ChecklistId == id);
+
+    /// <summary>Adds an active Checklist Master with these items (id 950+, outside the plan numbering) and returns its id.</summary>
+    public int SeedMaster(string appliesTo, params string[] labels)
+    {
+        var id = Math.Max(950, _checklists.Max(c => c.ChecklistId) + 1);
+        _checklists.Add(new MaintenanceChecklist
+        {
+            ChecklistId = id, ChecklistCode = $"CHK-{id:0000}", ChecklistName = $"Master {id}", AppliesTo = appliesTo, IsActive = true,
+            CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), RowVersion = new byte[] { 1 },
+            Items = labels.Select((l, i) => new MaintenanceChecklistItem { ChecklistItemId = id * 10 + i, ChecklistId = id, SortOrder = i + 1, ItemLabel = l }).ToList(),
+        });
+        return id;
+    }
+
+    /// <summary>The labels a plan's PM occurrences use: its checklist master's, or its own.</summary>
+    public string[] EffectiveLabels(int id)
+    {
+        var c = Stored(id);
+        var items = c.SourceChecklistId is { } sourceId ? Stored(sourceId).Items : c.Items;
+        return items.OrderBy(i => i.SortOrder).Select(i => i.ItemLabel).ToArray();
+    }
     public void SimulateConcurrentModification(int id) => Stored(id).RowVersion = Next(Stored(id).RowVersion);
 
     private static MaintenanceChecklistItem Clone(MaintenanceChecklistItem i) => new()
@@ -114,6 +174,9 @@ internal sealed class InMemoryMaintenanceChecklistRepository : IMaintenanceCheck
     {
         ChecklistId = c.ChecklistId, ChecklistCode = c.ChecklistCode, ChecklistName = c.ChecklistName, AppliesTo = c.AppliesTo,
         Frequency = c.Frequency, MachineId = c.MachineId, StartDate = c.StartDate, MaintenanceTypeId = c.MaintenanceTypeId,
+        SourceChecklistId = c.SourceChecklistId,
+        // Like the real repository's Include: a plan's checklist master comes with its items.
+        SourceChecklist = c.SourceChecklistId is { } sourceId ? Clone(_checklists.Single(x => x.ChecklistId == sourceId)) : null,
         Machine = c.MachineId is { } machineId ? _machines.Single(m => m.MachineId == machineId) : null,
         IsActive = c.IsActive, CreatedAt = c.CreatedAt, CreatedBy = c.CreatedBy, UpdatedAt = c.UpdatedAt, UpdatedBy = c.UpdatedBy,
         RowVersion = (byte[])c.RowVersion.Clone(),
@@ -122,9 +185,9 @@ internal sealed class InMemoryMaintenanceChecklistRepository : IMaintenanceCheck
 
     private static byte[] Next(byte[] current) => new[] { (byte)(current.Length == 0 ? 1 : current[0] + 1) };
 
-    public Task<(IReadOnlyList<MaintenanceChecklist> Items, int TotalCount)> GetAllAsync(MaintenanceChecklistListQuery query, CancellationToken cancellationToken)
+    public Task<(IReadOnlyList<MaintenanceChecklist> Items, int TotalCount)> GetAllAsync(MaintenanceChecklistListQuery query, bool checklistMasters, CancellationToken cancellationToken)
     {
-        IEnumerable<MaintenanceChecklist> q = _checklists;
+        IEnumerable<MaintenanceChecklist> q = _checklists.Where(c => (c.Frequency is null) == checklistMasters);
         if (query.IsActive is { } active) q = q.Where(c => c.IsActive == active);
         if (query.MachineId is { } machineId) q = q.Where(c => c.MachineId == machineId);
         if (!string.IsNullOrWhiteSpace(query.Frequency)) q = q.Where(c => c.Frequency == query.Frequency.Trim());
@@ -147,6 +210,14 @@ internal sealed class InMemoryMaintenanceChecklistRepository : IMaintenanceCheck
         return Task.FromResult(stored is null ? null : Clone(stored));
     }
 
+    public Task<IReadOnlyList<MaintenanceChecklist>> GetActiveChecklistMastersAsync(string appliesTo, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MaintenanceChecklist>>(_checklists
+            .Where(c => c.Frequency is null && c.IsActive && c.AppliesTo == appliesTo)
+            .OrderBy(c => c.ChecklistCode).Select(Clone).ToList());
+
+    public Task<bool> IsChecklistMasterUsedAsync(int checklistMasterId, CancellationToken cancellationToken) =>
+        Task.FromResult(_checklists.Any(c => c.SourceChecklistId == checklistMasterId));
+
     public Task<bool> ExistsActiveByNameAsync(string name, int? excludeChecklistId, CancellationToken cancellationToken) =>
         Task.FromResult(_checklists.Any(c =>
             c.IsActive && c.ChecklistId != excludeChecklistId && string.Equals(c.ChecklistName, name, StringComparison.OrdinalIgnoreCase)));
@@ -164,7 +235,7 @@ internal sealed class InMemoryMaintenanceChecklistRepository : IMaintenanceCheck
     {
         AddCalls++;
         var itemId = _nextItemId;
-        checklist.ChecklistId = _checklists.Count == 0 ? 1 : _checklists.Max(c => c.ChecklistId) + 1;
+        checklist.ChecklistId = _checklists.Where(c => c.ChecklistId < SeededMasterIds).Select(c => c.ChecklistId).DefaultIfEmpty(0).Max() + 1;
         checklist.ChecklistCode = $"CHK-{_nextCode:0000}"; // the real repository issues this from the MAINTENANCE_CHECKLIST sequence
         checklist.RowVersion = new byte[] { 1 };
         foreach (var item in checklist.Items)
@@ -313,6 +384,7 @@ internal sealed class InMemoryMaintenanceChecklistRepository : IMaintenanceCheck
         stored.MachineId = checklist.MachineId;
         stored.StartDate = checklist.StartDate;
         stored.MaintenanceTypeId = checklist.MaintenanceTypeId;
+        stored.SourceChecklistId = checklist.SourceChecklistId;
         stored.UpdatedAt = checklist.UpdatedAt;
         stored.UpdatedBy = checklist.UpdatedBy;
         if (replaceItems)

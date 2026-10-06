@@ -10,8 +10,20 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GlobalRubber.MMM.Infrastructure.Repositories;
 
-public sealed class MachinePmRepository : IMachinePmRepository
+public sealed class MachinePmRepository : IMachinePmRepository, IMachinePmNotificationQuery
 {
+    // Migration 021: open occurrences whose date has come that were not notified yet - one query, oldest first.
+    public async Task<IReadOnlyList<MachinePmNotificationCandidate>> GetUnnotifiedDueAsync(DateOnly today, int maxCount, CancellationToken cancellationToken) =>
+        await _dbContext.MachinePms.AsNoTracking()
+            .Where(pm => (pm.Status == MachinePmStatus.Scheduled || pm.Status == MachinePmStatus.InProgress) && pm.ScheduledDate <= today)
+            .Where(pm => pm.ScheduledDate == today
+                ? !_dbContext.Notifications.Any(n => n.EventKey == NotificationTypes.MachinePmDue + ":" + pm.MachinePmId.ToString())
+                : !_dbContext.Notifications.Any(n => n.EventKey == NotificationTypes.MachinePmOverdue + ":" + pm.MachinePmId.ToString()))
+            .OrderBy(pm => pm.ScheduledDate).ThenBy(pm => pm.MachinePmId)
+            .Take(maxCount)
+            .Select(pm => new MachinePmNotificationCandidate(pm.MachinePmId, pm.PmNo, pm.Machine.MachineCode, pm.ScheduledDate))
+            .ToListAsync(cancellationToken);
+
     private const string ConcurrencyMessage = "The maintenance record was modified by another user. Refresh it and try again.";
 
     private readonly GlobalRubberDbContext _dbContext;
@@ -58,6 +70,7 @@ public sealed class MachinePmRepository : IMachinePmRepository
                 Weekly = g.Count(p => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && p.Checklist!.Frequency == ChecklistFrequency.Weekly),
                 Monthly = g.Count(p => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && p.Checklist!.Frequency == ChecklistFrequency.Monthly),
                 Yearly = g.Count(p => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && p.Checklist!.Frequency == ChecklistFrequency.Yearly),
+                OneTime = g.Count(p => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && p.ScheduleType == PmScheduleType.Manual),
                 Completed = g.Count(p => p.Status == MachinePmStatus.Completed),
             })
             .FirstOrDefaultAsync(cancellationToken);
@@ -156,6 +169,8 @@ public sealed class MachinePmRepository : IMachinePmRepository
                 var checklist = pm.ChecklistId is { } checklistId
                     ? await _dbContext.MaintenanceChecklists.AsNoTracking()
                         .Include(c => c.Items.OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId))
+                        // Migration 020: a plan that uses a checklist master snapshots the master's items.
+                        .Include(c => c.SourceChecklist!.Items.OrderBy(i => i.SortOrder).ThenBy(i => i.ChecklistItemId))
                         .FirstOrDefaultAsync(c => c.ChecklistId == checklistId, cancellationToken)
                     : null;
 
@@ -210,6 +225,48 @@ public sealed class MachinePmRepository : IMachinePmRepository
         }
     }
 
+    public async Task<MachinePm> AddManualAsync(MachinePm pm, CancellationToken cancellationToken)
+    {
+        // The DbContext is configured with EnableRetryOnFailure, so a transaction we start ourselves must run inside the
+        // execution strategy. If the caller already has a transaction open (a verification harness), join it.
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+        var occurrences = new MachinePmOccurrenceWriter(_dbContext, _documentSequence);
+        var lines = pm.ChecklistItems.ToList();
+
+        try
+        {
+            await strategy.ExecuteAsync(async () =>
+            {
+                occurrences.Detach(pm); // a retry starts clean
+                pm.MachinePmId = 0;
+                pm.ChecklistItems = lines.Select(l => new MachinePmChecklistItem
+                {
+                    SortOrder = l.SortOrder, ItemLabel = l.ItemLabel, ChecklistItemId = l.ChecklistItemId, IsChecked = false,
+                }).ToList();
+
+                var ownsTransaction = _dbContext.Database.CurrentTransaction is null;
+                await using var transaction = ownsTransaction ? await _dbContext.Database.BeginTransactionAsync(cancellationToken) : null;
+
+                await occurrences.InsertAsync(pm, cancellationToken); // MACHINE_PM number + the PM + its snapshot
+
+                if (transaction is not null)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                }
+            });
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            throw new ConflictException("The maintenance number could not be issued because it already exists. Please try again.");
+        }
+        finally
+        {
+            occurrences.Detach(pm);
+        }
+
+        return pm;
+    }
+
     private IQueryable<MachinePm> Filtered(MachinePmListQuery request)
     {
         var query = _dbContext.MachinePms.AsNoTracking();
@@ -226,7 +283,8 @@ public sealed class MachinePmRepository : IMachinePmRepository
             var lowered = search.ToLower();
             query = query.Where(p => p.PmNo.ToLower().Contains(lowered)
                                      || p.Machine.MachineCode.ToLower().Contains(lowered)
-                                     || p.Machine.MachineName.ToLower().Contains(lowered));
+                                     || p.Machine.MachineName.ToLower().Contains(lowered)
+                                     || (p.Title != null && p.Title.ToLower().Contains(lowered))); // a manual PM's title (migration 025)
         }
 
         return query;
@@ -240,6 +298,12 @@ public sealed class MachinePmRepository : IMachinePmRepository
         if (bucket == MachinePmBucket.Completed)
         {
             return query.Where(p => p.Status == MachinePmStatus.Completed);
+        }
+
+        if (bucket == MachinePmBucket.OneTime)
+        {
+            // Migration 025: manual PMs have no plan and so no frequency - their own tab, with the same due-only rule.
+            return query.Where(p => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && p.ScheduleType == PmScheduleType.Manual);
         }
 
         var frequency = bucket is null ? null : MachinePmBucket.FrequencyOf(bucket);

@@ -26,6 +26,9 @@ public class MachinePmConfiguration : IEntityTypeConfiguration<MachinePm>
         // CK_machine_pm_transaction_status: Scheduled / In Progress / Completed (DF 'Scheduled').
         builder.Property(e => e.Status).HasColumnName("status").HasMaxLength(15).IsUnicode(false).IsRequired()
             .HasDefaultValue(MachinePmStatus.Scheduled);
+        // Migration 025: CK_machine_pm_transaction_schedule_type (Automatic / Manual; Manual => title, no checklist plan).
+        builder.Property(e => e.ScheduleType).HasColumnName("schedule_type").HasMaxLength(10).IsUnicode(false).IsRequired();
+        builder.Property(e => e.Title).HasColumnName("title").HasMaxLength(150);
 
         // UQ_machine_pm_transaction_pm_no
         builder.HasIndex(e => e.PmNo).IsUnique();

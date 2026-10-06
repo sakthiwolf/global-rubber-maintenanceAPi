@@ -33,6 +33,8 @@ public sealed class MachineService : IMachineService
     private const int ModelMaxLength = 100;         // model NVARCHAR(100)
     private const int SerialNumberMaxLength = 100;  // serial_number NVARCHAR(100)
     private const int CapacityMaxLength = 50;       // capacity NVARCHAR(50)
+    private const int RangeMaxLength = 100;         // machine_range NVARCHAR(100) - migration 022
+    private const int OwnershipMaxLength = 100;     // ownership NVARCHAR(100) - migration 022
     private const int RemarksMaxLength = 500;       // remarks NVARCHAR(500)
 
     private readonly IMachineRepository _machineRepository;
@@ -78,7 +80,8 @@ public sealed class MachineService : IMachineService
     {
         var fields = NormalizeAndValidate(request, rowVersion: null, requireRowVersion: false, out _);
 
-        var department = await LoadAssignableDepartmentAsync(fields.DepartmentId, cancellationToken);
+        // Optional (migration 023): no department is valid; a chosen one must exist and be active.
+        var department = fields.DepartmentId is { } chosenId ? await LoadAssignableDepartmentAsync(chosenId, cancellationToken) : null;
 
         await EnsureUniqueAsync(fields, excludeMachineId: null, cancellationToken);
 
@@ -88,13 +91,16 @@ public sealed class MachineService : IMachineService
             // document sequence inside the insert's transaction.
             MachineName = fields.Name,
             MachineType = fields.MachineType,
-            DepartmentId = department.DepartmentId,
+            DepartmentId = department?.DepartmentId,
             Location = fields.Location,
             Manufacturer = fields.Manufacturer,
             Model = fields.Model,
             SerialNumber = fields.SerialNumber,
             Capacity = fields.Capacity,
             InstallationDate = fields.InstallationDate,
+            MachineRange = fields.MachineRange,
+            Ownership = fields.Ownership,
+            PurchaseDate = fields.PurchaseDate,
             MaintenanceFrequencyDays = fields.MaintenanceFrequencyDays,
             Criticality = fields.Criticality,
             OperationalStatus = MachineOperationalStatus.Running, // BR-05
@@ -109,7 +115,8 @@ public sealed class MachineService : IMachineService
 
         await WriteAuditAsync(
             "MachineCreated", created, actingUserId, ipAddress,
-            actor => $"{actor} created machine '{created.MachineName}' ({created.MachineCode}) in department {department.DepartmentCode}.",
+            actor => $"{actor} created machine '{created.MachineName}' ({created.MachineCode})" +
+                     (department is null ? " without a department." : $" in department {department.DepartmentCode}."),
             details: null, cancellationToken);
 
         return MapToDto(created);
@@ -125,11 +132,12 @@ public sealed class MachineService : IMachineService
         var fields = NormalizeAndValidate(request, request.RowVersion, requireRowVersion: true, out var originalRowVersion);
 
         // Keeping the current department is always allowed (even if since deactivated - the form shows it flagged
-        // instead of silently clearing it); choosing a different one requires an existing, active one.
+        // instead of silently clearing it); clearing it is allowed (migration 023); choosing a different one requires an
+        // existing, active one.
         var oldDepartment = machine.Department;
-        var department = fields.DepartmentId != machine.DepartmentId
-            ? await LoadAssignableDepartmentAsync(fields.DepartmentId, cancellationToken)
-            : oldDepartment;
+        var department = fields.DepartmentId == machine.DepartmentId
+            ? oldDepartment
+            : fields.DepartmentId is { } newId ? await LoadAssignableDepartmentAsync(newId, cancellationToken) : null;
 
         await EnsureUniqueAsync(fields, machineId, cancellationToken);
 
@@ -142,26 +150,32 @@ public sealed class MachineService : IMachineService
 
         Track("machine_name", machine.MachineName, fields.Name);
         Track("machine_type", machine.MachineType, fields.MachineType);
-        Track("department_code", oldDepartment?.DepartmentCode, department.DepartmentCode);
+        Track("department_code", oldDepartment?.DepartmentCode, department?.DepartmentCode);
         Track("location", machine.Location, fields.Location);
         Track("manufacturer", machine.Manufacturer, fields.Manufacturer);
         Track("model", machine.Model, fields.Model);
         Track("serial_number", machine.SerialNumber, fields.SerialNumber);
         Track("capacity", machine.Capacity, fields.Capacity);
         Track("installation_date", FormatDate(machine.InstallationDate), FormatDate(fields.InstallationDate));
+        Track("machine_range", machine.MachineRange, fields.MachineRange);
+        Track("ownership", machine.Ownership, fields.Ownership);
+        Track("purchase_date", FormatDate(machine.PurchaseDate), FormatDate(fields.PurchaseDate));
         Track("maintenance_frequency_days", machine.MaintenanceFrequencyDays.ToString(CultureInfo.InvariantCulture), fields.MaintenanceFrequencyDays.ToString(CultureInfo.InvariantCulture));
         Track("criticality", machine.Criticality, fields.Criticality);
         Track("remarks", machine.Remarks, fields.Remarks);
 
         machine.MachineName = fields.Name;
         machine.MachineType = fields.MachineType;
-        machine.DepartmentId = department.DepartmentId;
+        machine.DepartmentId = department?.DepartmentId;
         machine.Location = fields.Location;
         machine.Manufacturer = fields.Manufacturer;
         machine.Model = fields.Model;
         machine.SerialNumber = fields.SerialNumber;
         machine.Capacity = fields.Capacity;
         machine.InstallationDate = fields.InstallationDate;
+        machine.MachineRange = fields.MachineRange;
+        machine.Ownership = fields.Ownership;
+        machine.PurchaseDate = fields.PurchaseDate;
         machine.MaintenanceFrequencyDays = fields.MaintenanceFrequencyDays;
         machine.Criticality = fields.Criticality;
         machine.Remarks = fields.Remarks;
@@ -240,9 +254,9 @@ public sealed class MachineService : IMachineService
     private static string? FormatDate(DateOnly? value) => value?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     private sealed record MachineFields(
-        string Name, string MachineType, int DepartmentId, string Location, string? Manufacturer, string? Model,
+        string Name, string MachineType, int? DepartmentId, string Location, string? Manufacturer, string? Model,
         string? SerialNumber, string? Capacity, DateOnly? InstallationDate, int MaintenanceFrequencyDays,
-        string Criticality, string? Remarks);
+        string Criticality, string? Remarks, string? MachineRange, string? Ownership, DateOnly? PurchaseDate);
 
     // Trim everything, blank optional fields become null. One place so Create and Update can never disagree about what
     // a valid machine looks like; the row version is only checked (and decoded) for Update.
@@ -259,6 +273,8 @@ public sealed class MachineService : IMachineService
         var model = Optional(request.Model);
         var serialNumber = Optional(request.SerialNumber);
         var capacity = Optional(request.Capacity);
+        var machineRange = Optional(request.MachineRange); // F01 fields: optional free text, blank -> null
+        var ownership = Optional(request.Ownership);
         var remarks = Optional(request.Remarks);
         var criticalityInput = Optional(request.Criticality);
         // Case-insensitive match onto the exact CK value, so "high" is stored as "High".
@@ -279,12 +295,15 @@ public sealed class MachineService : IMachineService
 
         RequiredText(name, NameMaxLength, "MachineName");
         RequiredText(machineType, TypeMaxLength, "MachineType");
-        if (request.DepartmentId <= 0) errors.Add("DepartmentId is required.");
+        // Optional since migration 023: null = no department; a supplied id must still be a real one.
+        if (request.DepartmentId is <= 0) errors.Add("DepartmentId is not valid.");
         RequiredText(location, LocationMaxLength, "Location");
         MaxLength(manufacturer, ManufacturerMaxLength, "Manufacturer");
         MaxLength(model, ModelMaxLength, "Model");
         MaxLength(serialNumber, SerialNumberMaxLength, "SerialNumber");
         MaxLength(capacity, CapacityMaxLength, "Capacity");
+        MaxLength(machineRange, RangeMaxLength, "MachineRange");
+        MaxLength(ownership, OwnershipMaxLength, "Ownership");
         MaxLength(remarks, RemarksMaxLength, "Remarks");
 
         if (request.MaintenanceFrequencyDays is null) errors.Add("MaintenanceFrequencyDays is required.");
@@ -307,7 +326,8 @@ public sealed class MachineService : IMachineService
 
         return new MachineFields(
             name, machineType, request.DepartmentId, location, manufacturer, model, serialNumber, capacity,
-            request.InstallationDate, request.MaintenanceFrequencyDays!.Value, criticality!, remarks);
+            request.InstallationDate, request.MaintenanceFrequencyDays!.Value, criticality!, remarks,
+            machineRange, ownership, request.PurchaseDate);
     }
 
     private static bool TryDecodeRowVersion(string value, out byte[]? bytes)
@@ -353,14 +373,17 @@ public sealed class MachineService : IMachineService
         MachineName = machine.MachineName,
         MachineType = machine.MachineType,
         DepartmentId = machine.DepartmentId,
-        DepartmentName = machine.Department?.DepartmentName ?? string.Empty,
-        DepartmentIsActive = machine.Department?.IsActive ?? false,
+        DepartmentName = machine.Department?.DepartmentName,
+        DepartmentIsActive = machine.Department?.IsActive,
         Location = machine.Location,
         Manufacturer = machine.Manufacturer,
         Model = machine.Model,
         SerialNumber = machine.SerialNumber,
         Capacity = machine.Capacity,
         InstallationDate = machine.InstallationDate,
+        MachineRange = machine.MachineRange,
+        Ownership = machine.Ownership,
+        PurchaseDate = machine.PurchaseDate,
         MaintenanceFrequencyDays = machine.MaintenanceFrequencyDays,
         Criticality = machine.Criticality,
         OperationalStatus = machine.OperationalStatus,

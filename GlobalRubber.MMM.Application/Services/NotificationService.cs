@@ -17,12 +17,15 @@ public sealed class NotificationService : INotificationService
     private readonly INotificationRepository _repository;
     private readonly IPermissionService _permissionService;
     private readonly IDateTimeProvider _dateTimeProvider;
+    private readonly INotificationChangeSignal _changeSignal;
 
-    public NotificationService(INotificationRepository repository, IPermissionService permissionService, IDateTimeProvider dateTimeProvider)
+    public NotificationService(
+        INotificationRepository repository, IPermissionService permissionService, IDateTimeProvider dateTimeProvider, INotificationChangeSignal changeSignal)
     {
         _repository = repository;
         _permissionService = permissionService;
         _dateTimeProvider = dateTimeProvider;
+        _changeSignal = changeSignal;
     }
 
     public async Task<PagedResult<NotificationDto>> GetMyNotificationsAsync(int userId, NotificationListQuery query, CancellationToken cancellationToken)
@@ -63,6 +66,7 @@ public sealed class NotificationService : INotificationService
         }
 
         await _repository.MarkReadAsync(userId, notificationId, _dateTimeProvider.UtcNow, cancellationToken);
+        _changeSignal.ReadStateChanged(userId); // the user's other tabs refresh their badge
 
         var reread = await _repository.GetVisibleAsync(userId, notificationId, viewable, cancellationToken)
             ?? throw new NotFoundException(nameof(Notification), notificationId);
@@ -78,6 +82,10 @@ public sealed class NotificationService : INotificationService
         }
 
         var marked = await _repository.MarkAllReadAsync(userId, viewable, _dateTimeProvider.UtcNow, cancellationToken);
+        if (marked > 0)
+        {
+            _changeSignal.ReadStateChanged(userId);
+        }
 
         return new NotificationMarkAllReadResultDto
         {
