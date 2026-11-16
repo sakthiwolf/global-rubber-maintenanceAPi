@@ -85,3 +85,6 @@ Desktop.ini
 *.bak
 *.swp
 *~
+
+## Generated data dump - contains user password hashes / personal data (never commit)
+database/erp-migration/02_master_data.sql
