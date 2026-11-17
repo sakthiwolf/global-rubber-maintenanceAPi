@@ -15,8 +15,9 @@ namespace GlobalRubber.MMM.Application.Services;
 /// BR-08 to BR-13, the validation table) and the database define:
 /// date, shift (Shift A/B/C), machine, product, mold and production qty are required; production qty &gt; 0; rejected qty
 /// defaults to 0 and is 0..production qty; remarks at most 500; the machine and product must be active; the mold must
-/// belong to the product; the mold's usage BEFORE the entry must be below its replacement shots; saving adds production
-/// qty to the mold's usage, stores usage before/after, and re-evaluates the mold status. In the same transaction the mold
+/// belong to the product; the mold's usage BEFORE the entry must be below its replacement shots; saving adds the SHOTS the
+/// entry took (production qty / the mold's cavities, rounded up - Q-01) to the mold's usage, stores usage before/after
+/// (in shots), and re-evaluates the mold status. In the same transaction the mold
 /// is evaluated for usage-based PM (<see cref="IMoldPmEvaluator"/>: warning / automatic PM). Good qty is computed by SQL
 /// Server. No date limit, no duplicate date+shift+machine+mold rule, no edit or cancel - all open in Q-14.
 /// </summary>
@@ -124,6 +125,7 @@ public sealed class ProductionEntryService : IProductionEntryService
             CreatedBy = actingUserId,
         };
 
+        var shots = 0; // set on the locked mold: pieces / its cavities
         string moldStatusBefore = string.Empty;
         string moldStatusAfter = string.Empty;
         var evaluation = MoldPmEvaluation.Nothing;
@@ -141,8 +143,9 @@ public sealed class ProductionEntryService : IProductionEntryService
                 throw new ConflictException(ReplacementLimitMessage);
             }
 
-            // BR-11: usage += production qty (pieces 1:1, cavities ignored - Q-01).
-            var usageAfter = (long)mold.CurrentUsageShots + input.ProductionQty;
+            // BR-11 / Q-01 (resolved): usage += the SHOTS the entry took = production qty (pieces) / cavities, rounded up.
+            shots = MoldLifeEngine.ShotsFromPieces(input.ProductionQty, mold.CavityCount);
+            var usageAfter = (long)mold.CurrentUsageShots + shots;
             if (usageAfter > int.MaxValue)
             {
                 throw new ValidationException("ProductionQty would take the mold's usage beyond the largest value that can be stored.");
@@ -180,8 +183,9 @@ public sealed class ProductionEntryService : IProductionEntryService
         // The template's own description ("... Mold usage updated from X to Y.") with the mold identified.
         await WriteAuditAsync(
             "ProductionEntryCreated", created, actingUserId, ipAddress,
-            actor => $"{actor} saved production entry {created.EntryNo} for {Grouped(created.ProductionQty)} pcs on mold {created.Mold.MoldCode}. " +
-                     $"Mold usage updated from {Grouped(created.MoldUsageBefore)} to {Grouped(created.MoldUsageAfter)}." +
+            actor => $"{actor} saved production entry {created.EntryNo} for {Grouped(created.ProductionQty)} pcs on mold {created.Mold.MoldCode} " +
+                     $"({Grouped(shots)} shots, {Grouped(created.Mold.CavityCount)} cavities). " +
+                     $"Mold usage updated from {Grouped(created.MoldUsageBefore)} to {Grouped(created.MoldUsageAfter)} shots." +
                      (moldStatusBefore != moldStatusAfter ? $" Mold status changed from {moldStatusBefore} to {moldStatusAfter}." : string.Empty),
             details, cancellationToken);
 

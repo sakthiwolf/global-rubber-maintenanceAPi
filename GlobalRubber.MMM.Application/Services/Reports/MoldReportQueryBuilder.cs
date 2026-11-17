@@ -147,7 +147,8 @@ public static class MoldReportQueryBuilder
         ReplacementShots = m.ReplacementShots,
         LifeState = m.LifeState,
         Status = m.Status,
-        RangeShots = scoped.Where(e => e.MoldId == m.MoldId).Sum(e => (long?)e.ProductionQty) ?? 0L,
+        // Shots, not pieces (Q-01): the usage each entry added - after minus before.
+        RangeShots = scoped.Where(e => e.MoldId == m.MoldId).Sum(e => (long?)(e.MoldUsageAfter - e.MoldUsageBefore)) ?? 0L,
         RangeEntryCount = scoped.Count(e => e.MoldId == m.MoldId),
         LastProductionDate = scoped.Where(e => e.MoldId == m.MoldId)
             .OrderByDescending(e => e.EntryDate).ThenByDescending(e => e.ProductionEntryId)

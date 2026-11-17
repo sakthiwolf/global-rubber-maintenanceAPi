@@ -135,7 +135,7 @@ internal sealed class InMemoryMoldRepository : IMoldRepository
         Task.FromResult(_molds.Any(m =>
             m.MoldId != excludeMoldId && string.Equals(m.SerialNumber, serialNumber, StringComparison.OrdinalIgnoreCase)));
 
-    public Task<Mold> AddAsync(Mold mold, CancellationToken cancellationToken)
+    public async Task<Mold> AddAsync(Mold mold, Func<Mold, CancellationToken, Task>? afterSave, CancellationToken cancellationToken)
     {
         AddCalls++;
         mold.MoldId = _molds.Max(m => m.MoldId) + 1;
@@ -143,7 +143,13 @@ internal sealed class InMemoryMoldRepository : IMoldRepository
         mold.RowVersion = new byte[] { 1 };
         mold.LifeState = MoldTestData.LifeStateOf(mold);
         _molds.Add(CopyColumns(mold));
-        return Task.FromResult(mold);
+
+        if (afterSave is not null)
+        {
+            await afterSave(mold, cancellationToken);
+        }
+
+        return mold;
     }
 
     public async Task<Mold> UpdateAsync(Mold mold, byte[] originalRowVersion, Func<Mold, CancellationToken, Task>? afterSave, CancellationToken cancellationToken)

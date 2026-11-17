@@ -21,7 +21,9 @@ namespace GlobalRubber.MMM.Application.Services;
 /// - serial number unique whenever entered (UX_mold_master_serial_number);
 /// - name unique among molds that are not Retired (the all-masters "unique among active records" rule - Q-27 open -
 ///   with Retired as the mold's inactive state);
-/// - a new mold starts at 0 usage; usage can be corrected on edit only (BR-14) and is always audited with old/new values;
+/// - a new mold starts at 0 usage; a mold already in production is created with an opening balance (opening usage, its
+///   date, optionally the usage at its last PM - which anchors the PM cycle), audited and PM-evaluated in the insert's
+///   transaction; afterwards usage can be corrected on edit only (BR-14) and is always audited with old/new values;
 /// - status: any of the five values on create and edit, as in the template (which values may be set manually is open
 ///   question Q-09). "Deactivate" (DELETE) sets Status = Retired - the table has no is_active column.
 /// Life state / life % / remaining shots follow section 8.2.
@@ -91,7 +93,10 @@ public sealed class MoldService : IMoldService
     public async Task<MoldDto> CreateAsync(
         CreateMoldRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken)
     {
-        var fields = NormalizeAndValidate(request, currentUsage: 0, rowVersion: null, requireRowVersion: false, out _);
+        var fields = NormalizeAndValidate(
+            request, currentUsage: request.OpeningUsageShots ?? 0, rowVersion: null, requireRowVersion: false, out _,
+            createToday: _dateTimeProvider.Today);
+        var opening = fields.Opening;
 
         var product = await LoadAssignableProductAsync(fields.ProductId, cancellationToken);
         var person = fields.ResponsibleEmployeeId is { } personId
@@ -103,7 +108,8 @@ public sealed class MoldService : IMoldService
         var mold = new Mold
         {
             // MoldId / MoldCode are never client-controlled: the code is issued by the repository from the MOLD document
-            // sequence inside the insert's transaction. A new mold starts at 0 shots.
+            // sequence inside the insert's transaction. A new mold starts at 0 shots; a mold already in production starts
+            // at its opening usage, with its PM cycle anchored on its last PM (see MoldPmRules.OpeningCycleStart).
             MoldName = fields.Name,
             ProductId = product.ProductId,
             MoldType = fields.MoldType,
@@ -121,8 +127,8 @@ public sealed class MoldService : IMoldService
             ReplacementShots = fields.ReplacementShots,
             MaintenanceFrequencyShots = fields.MaintenanceFrequencyShots,
             PmWarningShots = fields.PmWarningShots,
-            PmCycleStartShots = 0, // the first cycle's threshold is the interval itself
-            CurrentUsageShots = 0,
+            PmCycleStartShots = opening?.CycleStartShots ?? 0, // new mold: the first cycle's threshold is the interval itself
+            CurrentUsageShots = opening?.UsageShots ?? 0,
             ResponsibleEmployeeId = person?.EmployeeId,
             Status = fields.Status,
             Remarks = fields.Remarks,
@@ -130,14 +136,46 @@ public sealed class MoldService : IMoldService
             CreatedBy = actingUserId,
         };
 
-        var created = await _moldRepository.AddAsync(mold, cancellationToken);
+        // A new mold at 0 shots can never be due. A mold with an opening balance is evaluated in the insert's transaction:
+        // genuinely due (last PM + interval already reached) -> its automatic PM; inside the margin -> its warning.
+        var evaluation = MoldPmEvaluation.Nothing;
+        Func<Mold, CancellationToken, Task>? afterSave = opening is null
+            ? null
+            : async (saved, ct) => evaluation = await _moldPmEvaluator.EvaluateUsageAsync(saved, ct);
+
+        var created = await _moldRepository.AddAsync(mold, afterSave, cancellationToken);
         created.Product = product; // set after the save so EF never tries to insert the referenced rows
         created.ResponsibleEmployee = person;
 
-        await WriteAuditAsync(
-            "MoldCreated", created, actingUserId, ipAddress,
-            actor => $"{actor} created mold '{created.MoldName}' ({created.MoldCode}) for product {product.ProductCode}.",
-            details: null, cancellationToken);
+        if (opening is null)
+        {
+            await WriteAuditAsync(
+                "MoldCreated", created, actingUserId, ipAddress,
+                actor => $"{actor} created mold '{created.MoldName}' ({created.MoldCode}) for product {product.ProductCode}.",
+                details: null, cancellationToken);
+        }
+        else
+        {
+            static string Num(int value) => value.ToString(CultureInfo.InvariantCulture);
+            var openingDate = opening.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+            var details = new List<AuditLogDetailEntry>
+            {
+                new("opening_usage_shots", null, Num(opening.UsageShots)),
+                new("opening_balance_date", null, openingDate),
+                new("usage_at_last_pm_shots", null, opening.UsageAtLastPmShots is { } lastPm ? Num(lastPm) : null),
+                new("pm_cycle_start_shots", null, Num(opening.CycleStartShots)),
+            };
+
+            await WriteAuditAsync(
+                "MoldCreated", created, actingUserId, ipAddress,
+                actor => $"{actor} created mold '{created.MoldName}' ({created.MoldCode}) for product {product.ProductCode} " +
+                         $"as a mold already in production: opening usage {opening.UsageShots.ToString("N0", CultureInfo.InvariantCulture)} shots as of {openingDate}.",
+                details, cancellationToken);
+
+            var actorName = await AuditUserNameResolver.ResolveAsync(_userRepository, _logger, actingUserId, cancellationToken);
+            await _moldPmEvaluator.WriteAuditAsync(evaluation, $"the opening balance of mold {created.MoldCode} by {actorName}", ipAddress, cancellationToken);
+        }
 
         return MapToDto(created);
     }
@@ -321,12 +359,17 @@ public sealed class MoldService : IMoldService
         string Name, int ProductId, string MoldType, int CavityCount, string? Manufacturer, string? SerialNumber,
         string? Location, string? StorageLocation, DateOnly? CommissionDate, int MaximumShots, int WarningShots,
         int ReplacementShots, int? MaintenanceFrequencyShots, int? PmWarningShots, int CurrentUsageShots, int? ResponsibleEmployeeId,
-        string Status, string? Remarks, string? PartNo, string? PartDescription, string? Ownership);
+        string Status, string? Remarks, string? PartNo, string? PartDescription, string? Ownership, OpeningBalance? Opening = null);
+
+    /// <summary>The validated opening balance of a mold already in production (create only).</summary>
+    private sealed record OpeningBalance(int UsageShots, DateOnly Date, int? UsageAtLastPmShots, int CycleStartShots);
 
     // Trim everything, blank optional fields become null. One place so Create and Update can never disagree about what a
-    // valid mold looks like; the row version is only checked (and decoded) for Update.
+    // valid mold looks like; the row version is only checked (and decoded) for Update. createToday is given only on Create:
+    // it enables the opening-balance fields (validated against the plant date); on Update they are ignored.
     private static MoldFields NormalizeAndValidate(
-        CreateMoldRequest request, int currentUsage, string? rowVersion, bool requireRowVersion, out byte[]? originalRowVersion)
+        CreateMoldRequest request, int currentUsage, string? rowVersion, bool requireRowVersion, out byte[]? originalRowVersion,
+        DateOnly? createToday = null)
     {
         static string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
@@ -381,7 +424,14 @@ public sealed class MoldService : IMoldService
         if (request is { WarningShots: { } w2, ReplacementShots: { } r } && r <= w2) errors.Add("Replacement level must be greater than warning level.");
         if (request is { MaximumShots: { } m2, ReplacementShots: { } r2 } && r2 > m2) errors.Add("Replacement level cannot exceed maximum shots.");
 
-        if (currentUsage < 0) errors.Add("CurrentUsageShots cannot be negative."); // CK_mold_master_current_usage_shots
+        // On create the usage is the opening usage, validated (with its own message) below.
+        if (createToday is null && currentUsage < 0) errors.Add("CurrentUsageShots cannot be negative."); // CK_mold_master_current_usage_shots
+
+        var hasOpening = createToday is not null && request.OpeningUsageShots is not null;
+        if (createToday is { } today)
+        {
+            ValidateOpeningBalance(request, today, errors);
+        }
 
         // Usage-based PM (migration 014): CK_mold_master_maintenance_frequency_shots / CK_mold_master_pm_warning_shots.
         if (request.MaintenanceFrequencyShots is <= 0) errors.Add("Maintenance frequency (shots) must be greater than 0.");
@@ -407,11 +457,45 @@ public sealed class MoldService : IMoldService
             throw new ValidationException(errors);
         }
 
+        var opening = hasOpening
+            ? new OpeningBalance(
+                request.OpeningUsageShots!.Value, request.OpeningBalanceDate!.Value, request.UsageAtLastPmShots,
+                MoldPmRules.OpeningCycleStart(request.OpeningUsageShots.Value, request.UsageAtLastPmShots, request.MaintenanceFrequencyShots))
+            : null;
+
         return new MoldFields(
             name, request.ProductId, moldType, cavityCount, manufacturer, serialNumber, location, storageLocation,
             request.CommissionDate, request.MaximumShots!.Value, request.WarningShots!.Value, request.ReplacementShots!.Value,
             request.MaintenanceFrequencyShots, request.PmWarningShots, currentUsage, request.ResponsibleEmployeeId, status!, remarks,
-            partNo, partDescription, ownership);
+            partNo, partDescription, ownership, opening);
+    }
+
+    // Opening balance of a mold already in production (create only). All three fields blank = a new mold at 0 shots.
+    private static void ValidateOpeningBalance(CreateMoldRequest request, DateOnly today, List<string> errors)
+    {
+        if (request.OpeningUsageShots is not { } openingUsage)
+        {
+            if (request.UsageAtLastPmShots is not null || request.OpeningBalanceDate is not null)
+            {
+                errors.Add("Opening usage (shots) is required when an opening balance date or usage at last PM is entered.");
+            }
+
+            return;
+        }
+
+        if (openingUsage < 0) errors.Add("Opening usage (shots) cannot be negative.");
+
+        if (request.OpeningBalanceDate is not { } date) errors.Add("Opening balance date is required for a mold already in production.");
+        else if (date > today) errors.Add("Opening balance date cannot be in the future.");
+        else if (request.CommissionDate is { } commissioned && date < commissioned) errors.Add("Opening balance date cannot be before the commission date.");
+
+        if (request.UsageAtLastPmShots is { } lastPm)
+        {
+            if (lastPm < 0) errors.Add("Usage at last PM (shots) cannot be negative.");
+            else if (lastPm > openingUsage) errors.Add("Usage at last PM (shots) cannot be more than the opening usage.");
+
+            if (request.MaintenanceFrequencyShots is null) errors.Add("Usage at last PM (shots) needs a maintenance frequency (shots).");
+        }
     }
 
     private static bool TryDecodeRowVersion(string value, out byte[]? bytes)

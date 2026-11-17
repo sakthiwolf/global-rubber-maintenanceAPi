@@ -27,8 +27,20 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
         {
             services.RemoveAll<INotificationRepository>();
             services.AddSingleton<INotificationRepository>(new InMemoryNotificationRepository());
+
+            // Tests mint tokens for users / roles that exist in no database (TestAuth.MintToken): accept the token's own
+            // role. SessionUserValidatorTests covers the real check; a test that needs it registers its own.
+            services.RemoveAll<GlobalRubber.MMM.Application.Interfaces.ISessionUserValidator>();
+            services.AddSingleton<GlobalRubber.MMM.Application.Interfaces.ISessionUserValidator>(new TokenRoleSessionUserValidator());
         });
     }
+}
+
+/// <summary>Test stand-in for the per-request user re-check: every token's user is active with the token's own role.</summary>
+internal sealed class TokenRoleSessionUserValidator : GlobalRubber.MMM.Application.Interfaces.ISessionUserValidator
+{
+    public Task<string?> GetCurrentRoleCodeAsync(int userId, string? tokenRoleCode, CancellationToken cancellationToken) =>
+        Task.FromResult(tokenRoleCode);
 }
 
 /// <summary>Records what a service published (never throws, like the real publisher); every notification is "Added".</summary>

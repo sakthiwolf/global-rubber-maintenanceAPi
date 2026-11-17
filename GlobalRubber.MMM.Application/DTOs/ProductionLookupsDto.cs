@@ -36,6 +36,10 @@ public sealed class ProductionMoldLookupDto
     public string MoldCode { get; init; } = string.Empty;
     public string MoldName { get; init; } = string.Empty;
     public int ProductId { get; init; }
+
+    /// <summary>Cavities of the mold: the entry's pieces / this (rounded up) is the shots added to its usage (Q-01).</summary>
+    public int CavityCount { get; init; } = 1;
+
     public int CurrentUsageShots { get; init; }
     public int MaximumShots { get; init; }
     public int WarningShots { get; init; }

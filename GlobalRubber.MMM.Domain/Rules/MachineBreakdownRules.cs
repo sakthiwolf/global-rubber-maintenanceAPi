@@ -1,3 +1,4 @@
+using GlobalRubber.MMM.Domain.Common;
 using GlobalRubber.MMM.Domain.Constants;
 
 namespace GlobalRubber.MMM.Domain.Rules;
@@ -15,6 +16,21 @@ public static class MachineBreakdownRules
     /// <summary>Stages in which the breakdown still keeps the machine down (before Resolved).</summary>
     public static readonly IReadOnlyList<string> UnresolvedStages =
         new[] { BreakdownStage.Reported, BreakdownStage.Assigned, BreakdownStage.MaintenanceStarted };
+
+    /// <summary>
+    /// Downtime: from the moment the machine broke down (the reported breakdown date + time, plant / IST local) to the
+    /// resolution, in hours rounded to 0.1 - the whole time the machine was down, including the wait before maintenance
+    /// started. Never negative (a breakdown time entered after the resolution counts as 0).
+    /// </summary>
+    public static decimal DowntimeHours(DateOnly breakdownDate, TimeOnly breakdownTime, DateTime resolvedAtUtc) =>
+        HoursBetween(PlantTime.ToUtc(breakdownDate, breakdownTime), resolvedAtUtc);
+
+    /// <summary>Repair time: maintenance started to resolved (both UTC), hours rounded to 0.1, never negative.</summary>
+    public static decimal? RepairHours(DateTime? maintenanceStartedAtUtc, DateTime? resolvedAtUtc) =>
+        maintenanceStartedAtUtc is { } start && resolvedAtUtc is { } end ? HoursBetween(start, end) : null;
+
+    private static decimal HoursBetween(DateTime fromUtc, DateTime toUtc) =>
+        Math.Max(0m, Math.Round((decimal)(toUtc - fromUtc).TotalHours, 1, MidpointRounding.AwayFromZero));
 
     /// <summary>BR-16: a reported breakdown puts the machine into Breakdown.</summary>
     public static string OperationalStatusAfterReport(string currentStatus) => MachineOperationalStatus.Breakdown;

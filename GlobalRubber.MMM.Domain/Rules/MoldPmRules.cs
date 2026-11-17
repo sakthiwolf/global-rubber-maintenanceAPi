@@ -50,6 +50,21 @@ public static class MoldPmRules
         return checked((int)(thresholdShots + wholeIntervals * intervalShots));
     }
 
+    /// <summary>
+    /// The cycle start of a mold registered with an opening balance (already in production before it was entered here):
+    /// the usage at its last PM when known; otherwise the last WHOLE interval at or below the opening usage, so a mold
+    /// whose PMs were done on schedule is not flagged overdue for cycles that are long past (opening 320,000, interval
+    /// 50,000 -&gt; start 300,000, next PM 350,000). Without an interval (PM disabled) the cycle starts at 0, as for any mold.
+    /// </summary>
+    public static int OpeningCycleStart(int openingUsageShots, int? usageAtLastPmShots, int? intervalShots)
+    {
+        if (!IsEnabled(intervalShots)) return 0;
+        if (usageAtLastPmShots is { } lastPm) return lastPm;
+
+        var interval = intervalShots!.Value;
+        return openingUsageShots / interval * interval;
+    }
+
     /// <summary>What an evaluation of the (locked) mold must do. At most one of the two is true.</summary>
     public sealed record Decision(bool CreatePm, bool RaiseWarning, long ThresholdShots, long RemainingShots)
     {

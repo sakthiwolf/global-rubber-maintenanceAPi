@@ -91,7 +91,7 @@ public sealed class MoldRepository : IMoldRepository
             .AnyAsync(m => m.SerialNumber != null && m.SerialNumber.ToLower() == lowered && m.MoldId != excludeMoldId, cancellationToken);
     }
 
-    public async Task<Mold> AddAsync(Mold mold, CancellationToken cancellationToken)
+    public async Task<Mold> AddAsync(Mold mold, Func<Mold, CancellationToken, Task>? afterSave, CancellationToken cancellationToken)
     {
         // The DbContext is configured with EnableRetryOnFailure, so a transaction we start ourselves must run inside
         // the execution strategy. If the caller already has a transaction open (a verification harness), join it.
@@ -111,6 +111,12 @@ public sealed class MoldRepository : IMoldRepository
                 mold.MoldCode = await _documentSequence.NextCodeAsync(DocumentTypes.Mold, cancellationToken);
                 _dbContext.Molds.Add(mold);
                 await _dbContext.SaveChangesAsync(cancellationToken); // also reads back the computed life_state
+
+                // Evaluated while the new row is exclusively locked by this transaction (opening-balance molds).
+                if (afterSave is not null)
+                {
+                    await afterSave(mold, cancellationToken);
+                }
 
                 if (transaction is not null)
                 {

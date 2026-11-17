@@ -3,7 +3,8 @@ namespace GlobalRubber.MMM.Application.DTOs;
 /// <summary>
 /// Request body for POST /api/v1/molds - the fields of the Add Mold form (analysis 4.2 / F-03). Not accepted (and
 /// ignored by model binding if sent): moldId, moldCode (issued from the MOLD document sequence), currentUsageShots (a new
-/// mold starts at 0; it is corrected on edit only - BR-14), lifeState (computed), rowVersion and the audit columns.
+/// mold starts at 0, or at its opening usage when it was already in production; afterwards it is corrected on edit only -
+/// BR-14), lifeState (computed), rowVersion and the audit columns.
 /// </summary>
 public class CreateMoldRequest
 {
@@ -48,4 +49,21 @@ public class CreateMoldRequest
     public string? Status { get; init; }
 
     public string? Remarks { get; init; }
+
+    /// <summary>
+    /// Opening balance - CREATE ONLY (ignored on update, where usage is corrected through CurrentUsageShots). For a mold
+    /// that was already in production before it was registered here: the shots it has already done. Blank = a new mold
+    /// starting at 0. Must be &gt;= 0; needs <see cref="OpeningBalanceDate"/>.
+    /// </summary>
+    public int? OpeningUsageShots { get; init; }
+
+    /// <summary>
+    /// Opening balance - CREATE ONLY. The mold's usage when its last preventive maintenance was done; it becomes the PM
+    /// cycle start (next PM = this + Maintenance Frequency). Optional; needs an opening usage and a maintenance frequency,
+    /// and cannot be above the opening usage. Blank = the cycle starts at the last whole interval below the opening usage.
+    /// </summary>
+    public int? UsageAtLastPmShots { get; init; }
+
+    /// <summary>Opening balance - CREATE ONLY. The date the opening figures were taken: required with an opening usage, not in the future.</summary>
+    public DateOnly? OpeningBalanceDate { get; init; }
 }

@@ -44,6 +44,32 @@ public class ProductionEntryServiceTests
 
     // ================================================================ create
 
+    [Theory] // Q-01: usage counts SHOTS = pieces / cavities, rounded up (an LH/RH pair tool makes both parts per shot)
+    [InlineData(2, 656, 328)]  // 328 LH + 328 RH on a 2-cavity tool = 328 shots
+    [InlineData(4, 1_000, 250)]
+    [InlineData(3, 100, 34)]   // the last, partly filled shot still counts
+    [InlineData(1, 1_200, 1_200)]
+    public async Task Create_AddsShotsNotPieces_ToTheMoldUsage(int cavities, int pieces, int expectedShots)
+    {
+        var s = Create();
+        s.Entries.StoredMold(1).CavityCount = cavities;
+
+        var dto = await s.Service.CreateAsync(Req(qty: pieces), 1, null, CancellationToken.None);
+
+        Assert.Equal(pieces, dto.ProductionQty); // the pieces are kept as entered
+        Assert.Equal((100_000, 100_000 + expectedShots), (dto.MoldUsageBefore, dto.MoldUsageAfter));
+        Assert.Equal(100_000 + expectedShots, s.Entries.StoredMold(1).CurrentUsageShots);
+    }
+
+    [Theory]
+    [InlineData(656, 2, 328)]
+    [InlineData(1, 36, 1)]
+    [InlineData(0, 4, 0)]
+    [InlineData(10, 0, 10)] // a cavity count below 1 counts as 1
+    [InlineData(int.MaxValue, 1, int.MaxValue)]
+    public void ShotsFromPieces_DividesByTheCavities_RoundingUp(int pieces, int cavities, int expected) =>
+        Assert.Equal(expected, GlobalRubber.MMM.Domain.Rules.MoldLifeEngine.ShotsFromPieces(pieces, cavities));
+
     [Fact]
     public async Task Create_IssuesTheNumber_StoresTheUsageSnapshot_UpdatesTheMold_AndAudits()
     {
@@ -74,7 +100,8 @@ public class ProductionEntryServiceTests
         Assert.Equal(dto.ProductionEntryId, entry.EntityId);
         Assert.Equal("PROD-0001", entry.RecordRef);
         Assert.Equal(("Sakthi", "10.0.0.5", (int?)1), (entry.UserName, entry.IpAddress, entry.UserId));
-        Assert.Contains("Mold usage updated from 100,000 to 101,200.", entry.Description);
+        Assert.Contains("(1,200 shots, 1 cavities)", entry.Description);
+        Assert.Contains("Mold usage updated from 100,000 to 101,200 shots.", entry.Description);
         Assert.Contains(entry.Details, d => d is { FieldName: "mold_usage", OldValue: "100000", NewValue: "101200" });
         Assert.DoesNotContain(entry.Details, d => d.FieldName == "mold_status");
     }

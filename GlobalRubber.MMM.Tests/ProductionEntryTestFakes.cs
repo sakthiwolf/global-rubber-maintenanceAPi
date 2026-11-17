@@ -104,7 +104,7 @@ internal sealed class InMemoryProductionEntryRepository : IProductionEntryReposi
         Molds = _molds.Where(m => _products.Single(p => p.ProductId == m.ProductId).IsActive).OrderBy(m => m.MoldCode)
             .Select(m => new ProductionMoldLookupDto
             {
-                MoldId = m.MoldId, MoldCode = m.MoldCode, MoldName = m.MoldName, ProductId = m.ProductId, CurrentUsageShots = m.CurrentUsageShots,
+                MoldId = m.MoldId, MoldCode = m.MoldCode, MoldName = m.MoldName, ProductId = m.ProductId, CavityCount = m.CavityCount, CurrentUsageShots = m.CurrentUsageShots,
                 MaximumShots = m.MaximumShots, WarningShots = m.WarningShots, ReplacementShots = m.ReplacementShots, Status = m.Status,
                 LifeState = m.CurrentUsageShots >= m.ReplacementShots ? MoldLifeState.Replace : m.CurrentUsageShots >= m.WarningShots ? MoldLifeState.Warning : MoldLifeState.Normal,
             }).ToList(),
@@ -118,6 +118,7 @@ internal sealed class InMemoryProductionEntryRepository : IProductionEntryReposi
         var locked = new Mold
         {
             MoldId = stored.MoldId, MoldCode = stored.MoldCode, MoldName = stored.MoldName, ProductId = stored.ProductId,
+            CavityCount = stored.CavityCount, // the real repository reads the whole locked row (SELECT *)
             MaximumShots = stored.MaximumShots, WarningShots = stored.WarningShots, ReplacementShots = stored.ReplacementShots,
             CurrentUsageShots = stored.CurrentUsageShots, Status = stored.Status, UpdatedAt = stored.UpdatedAt, UpdatedBy = stored.UpdatedBy,
             MaintenanceFrequencyShots = stored.MaintenanceFrequencyShots, PmWarningShots = stored.PmWarningShots, PmCycleStartShots = stored.PmCycleStartShots,

@@ -58,6 +58,8 @@ internal sealed class MoldReportScenario
         {
             ProductionEntryId = id, EntryNo = $"PROD-000{id}", EntryDate = date, MachineId = machine, Machine = Machines.Single(m => m.MachineId == machine),
             MoldId = mold, Mold = Molds.Single(m => m.MoldId == mold), ProductId = 1, ProductionQty = qty, Status = status, Shift = "Shift A",
+            // As every saved entry stores it: the shots it added (1 cavity -> shots = pieces). The report sums after - before.
+            MoldUsageBefore = 0, MoldUsageAfter = qty,
         };
 
         Entries.Add(E(1, new(2026, 9, 1), 1, 1, 1_000));

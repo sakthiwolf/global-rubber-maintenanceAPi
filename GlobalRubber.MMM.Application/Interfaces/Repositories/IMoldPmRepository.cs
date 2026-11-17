@@ -38,10 +38,12 @@ public interface IMoldPmRepository
     /// <summary>
     /// Lock the mold, <paramref name="applyToLockedMold"/> (new cycle start, status), write the PM's completion columns
     /// guarded by <paramref name="originalRowVersion"/> (stale -&gt; 409), save both, then <paramref name="afterSave"/> (the
-    /// evaluation of the new cycle) in the same transaction, commit.
+    /// evaluation of the new cycle) in the same transaction, commit. <paramref name="applyToLockedMold"/> also receives
+    /// how many OTHER PMs of the mold are still In Progress, counted under the mold lock - the mold is released from
+    /// Maintenance only when none is.
     /// </summary>
     Task<MoldPm> CompleteAsync(
-        MoldPm pm, byte[] originalRowVersion, Action<Mold> applyToLockedMold, Func<Mold, CancellationToken, Task> afterSave,
+        MoldPm pm, byte[] originalRowVersion, Action<Mold, int> applyToLockedMold, Func<Mold, CancellationToken, Task> afterSave,
         CancellationToken cancellationToken);
 
     /// <summary>

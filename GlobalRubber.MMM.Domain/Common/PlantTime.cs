@@ -11,4 +11,8 @@ public static class PlantTime
 
     /// <summary>The plant's calendar date at the given UTC instant (e.g. 2026-09-24 20:00 UTC is 2026-09-25 in IST).</summary>
     public static DateOnly ToPlantDate(DateTime utc) => DateOnly.FromDateTime(utc + UtcOffset);
+
+    /// <summary>The UTC instant of a plant (IST) local date and time, e.g. 2026-09-25 08:00 IST is 2026-09-25 02:30 UTC.</summary>
+    public static DateTime ToUtc(DateOnly plantDate, TimeOnly plantTime) =>
+        DateTime.SpecifyKind(plantDate.ToDateTime(plantTime) - UtcOffset, DateTimeKind.Utc);
 }

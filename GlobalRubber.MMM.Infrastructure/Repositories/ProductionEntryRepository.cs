@@ -99,7 +99,7 @@ public sealed class ProductionEntryRepository : IProductionEntryRepository
             .OrderBy(m => m.MoldCode)
             .Select(m => new ProductionMoldLookupDto
             {
-                MoldId = m.MoldId, MoldCode = m.MoldCode, MoldName = m.MoldName, ProductId = m.ProductId,
+                MoldId = m.MoldId, MoldCode = m.MoldCode, MoldName = m.MoldName, ProductId = m.ProductId, CavityCount = m.CavityCount,
                 CurrentUsageShots = m.CurrentUsageShots, MaximumShots = m.MaximumShots, WarningShots = m.WarningShots,
                 ReplacementShots = m.ReplacementShots, LifeState = m.LifeState, Status = m.Status,
             })

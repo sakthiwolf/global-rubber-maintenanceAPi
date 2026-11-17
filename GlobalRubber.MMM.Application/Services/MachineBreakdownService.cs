@@ -214,11 +214,9 @@ public sealed class MachineBreakdownService : IMachineBreakdownService
                 existing.ResolvedAt = now;
                 existing.RootCause = string.IsNullOrWhiteSpace(request.RootCause) ? null : request.RootCause.Trim();
                 existing.CorrectiveAction = string.IsNullOrWhiteSpace(request.CorrectiveAction) ? null : request.CorrectiveAction.Trim();
-                if (existing.MaintenanceStartedAt.HasValue)
-                {
-                    var hrs = (now - existing.MaintenanceStartedAt.Value).TotalHours;
-                    existing.DowntimeHours = Math.Max(0, Math.Round((decimal)hrs, 1));
-                }
+                // The whole time the machine was down: from the reported breakdown (plant time) to now - not only the
+                // repair (maintenance started -> resolved), which the DTO reports separately as RepairHours.
+                existing.DowntimeHours = MachineBreakdownRules.DowntimeHours(existing.BreakdownDate, existing.BreakdownTime, now);
                 break;
 
             case BreakdownStage.Closed:
@@ -563,6 +561,7 @@ public sealed class MachineBreakdownService : IMachineBreakdownService
         RootCause = b.RootCause,
         CorrectiveAction = b.CorrectiveAction,
         DowntimeHours = b.DowntimeHours,
+        RepairHours = MachineBreakdownRules.RepairHours(b.MaintenanceStartedAt, b.ResolvedAt),
         CreatedAt = b.CreatedAt,
         CreatedBy = b.CreatedBy,
         UpdatedAt = b.UpdatedAt,

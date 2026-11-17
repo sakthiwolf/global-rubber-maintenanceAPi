@@ -195,6 +195,24 @@ public class ManualPmScheduleTests : IClassFixture<ApiWebApplicationFactory>
         Assert.Contains("usage-based maintenance cycle is unchanged", s.Audit.Entries.Last().Description);
     }
 
+    [Fact] // A3: the mold stays under maintenance while ANOTHER of its PMs is still In Progress
+    public async Task CompletingOneOfTwoInProgressMoldPms_KeepsTheMoldInMaintenance_UntilTheLastOneIsCompleted()
+    {
+        var s = Create();
+        var mold = s.Molds.Single(m => m.MoldId == 1);
+        var first = await ScheduleMold(s, MoldRequest(title: "Cavity polish", date: Today));
+        var second = await ScheduleMold(s, MoldRequest(title: "Vent cleaning", date: Today));
+        var firstStarted = await s.MoldPms.StartAsync(first.MoldPmId, new StartMoldPmRequest { RowVersion = first.RowVersion }, 1, null, CancellationToken.None);
+        var secondStarted = await s.MoldPms.StartAsync(second.MoldPmId, new StartMoldPmRequest { RowVersion = second.RowVersion }, 1, null, CancellationToken.None);
+        Assert.Equal(MoldStatus.Maintenance, mold.Status);
+
+        await s.MoldPms.CompleteAsync(first.MoldPmId, new CompleteMoldPmRequest { MaintenanceBy = "Ravi", RowVersion = firstStarted.RowVersion }, 1, null, CancellationToken.None);
+        Assert.Equal(MoldStatus.Maintenance, mold.Status); // the second PM is still being worked on
+
+        await s.MoldPms.CompleteAsync(second.MoldPmId, new CompleteMoldPmRequest { MaintenanceBy = "Ravi", RowVersion = secondStarted.RowVersion }, 1, null, CancellationToken.None);
+        Assert.Equal(MoldStatus.InProduction, mold.Status); // now released
+    }
+
     [Fact]
     public async Task AManualMoldPm_DoesNotBlockOrChangeTheAutomaticUsagePm()
     {

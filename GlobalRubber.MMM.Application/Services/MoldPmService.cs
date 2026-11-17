@@ -199,7 +199,7 @@ public sealed class MoldPmService : IMoldPmService
         var nextThreshold = 0L;
         var evaluation = MoldPmEvaluation.Nothing;
 
-        var completed = await _repository.CompleteAsync(pm, originalRowVersion, mold =>
+        var completed = await _repository.CompleteAsync(pm, originalRowVersion, (mold, otherPmsInProgress) =>
         {
             before = (mold.PmCycleStartShots, mold.Status);
 
@@ -216,9 +216,11 @@ public sealed class MoldPmService : IMoldPmService
                 nextThreshold = MoldPmRules.NextThreshold(mold.PmCycleStartShots, interval);
             }
 
-            if (mold.Status == MoldStatus.Maintenance)
+            // BR-25 - only a mold that was under maintenance is released, and only when no OTHER PM of it (an automatic
+            // and a manual one can be open together) is still In Progress.
+            if (mold.Status == MoldStatus.Maintenance && otherPmsInProgress == 0)
             {
-                mold.Status = MoldStatus.InProduction; // BR-25 - only a mold that was under maintenance is released
+                mold.Status = MoldStatus.InProduction;
             }
 
             mold.UpdatedAt = now;

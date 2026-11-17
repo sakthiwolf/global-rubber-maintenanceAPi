@@ -1,9 +1,11 @@
+using System.Security.Claims;
 using System.Text;
 using GlobalRubber.MMM.Api.Configuration;
 using GlobalRubber.MMM.Api.HealthChecks;
 using GlobalRubber.MMM.Api.Middlewares;
 using GlobalRubber.MMM.Api.Realtime;
 using GlobalRubber.MMM.Application.Common;
+using GlobalRubber.MMM.Application.Interfaces;
 using GlobalRubber.MMM.Infrastructure.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
@@ -128,6 +130,40 @@ public static class ServiceCollectionExtensions
                         }
 
                         return Task.CompletedTask;
+                    },
+
+                    // The signature and lifetime are not enough: the user may have been deactivated, or their role changed
+                    // or deactivated, since the token was issued. Checked on every authenticated request (API and hub).
+                    OnTokenValidated = async context =>
+                    {
+                        var principal = context.Principal;
+                        var identity = principal?.Identity as ClaimsIdentity;
+                        if (identity is null
+                            || !int.TryParse(principal!.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+                        {
+                            context.Fail("The access token has no user.");
+                            return;
+                        }
+
+                        var tokenRole = principal.FindFirst(ClaimTypes.Role)?.Value;
+                        var validator = context.HttpContext.RequestServices.GetRequiredService<ISessionUserValidator>();
+                        var currentRole = await validator.GetCurrentRoleCodeAsync(userId, tokenRole, context.HttpContext.RequestAborted);
+                        if (currentRole is null)
+                        {
+                            context.Fail("The user is no longer active.");
+                            return;
+                        }
+
+                        // A changed role takes effect immediately: permissions are looked up for the CURRENT role.
+                        if (!string.Equals(currentRole, tokenRole, StringComparison.Ordinal))
+                        {
+                            foreach (var claim in identity.FindAll(ClaimTypes.Role).ToList())
+                            {
+                                identity.RemoveClaim(claim);
+                            }
+
+                            identity.AddClaim(new Claim(ClaimTypes.Role, currentRole));
+                        }
                     },
                 };
             });

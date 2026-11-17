@@ -3,6 +3,7 @@ using GlobalRubber.MMM.Application.DTOs;
 using GlobalRubber.MMM.Application.Services;
 using GlobalRubber.MMM.Domain.Constants;
 using GlobalRubber.MMM.Domain.Entities;
+using GlobalRubber.MMM.Domain.Rules;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GlobalRubber.MMM.Tests;
@@ -67,13 +68,16 @@ public class MachineBreakdownWorkflowTests
         s.Clock.UtcNow = new DateTime(2026, 10, 5, 7, 14, 0, DateTimeKind.Utc); // 2 h 44 min after the start
         var resolved = await Advance(s, id, BreakdownStage.Resolved, rootCause: " Seal worn ", corrective: "Seal replaced");
         Assert.Equal(s.Clock.UtcNow, resolved.ResolvedAt);
-        Assert.Equal(2.7m, resolved.DowntimeHours); // Resolved - Maintenance Started, one decimal
+        // Breakdown 09:00 IST (03:30 UTC) -> resolved 07:14 UTC = 3 h 44 min: the whole time the machine was down,
+        // including the hour before maintenance started. Repair time alone (started -> resolved) is 2 h 44 min.
+        Assert.Equal(3.7m, resolved.DowntimeHours);
+        Assert.Equal(2.7m, resolved.RepairHours);
         Assert.Equal(("Seal worn", "Seal replaced"), (resolved.RootCause, resolved.CorrectiveAction));
 
         s.Clock.UtcNow = new DateTime(2026, 10, 5, 8, 0, 0, DateTimeKind.Utc);
         var closed = await Advance(s, id, BreakdownStage.Closed);
         Assert.Equal((BreakdownStage.Closed, (DateTime?)s.Clock.UtcNow), (closed.Stage, closed.ClosedAt));
-        Assert.Equal(2.7m, closed.DowntimeHours);                         // unchanged by closing
+        Assert.Equal(3.7m, closed.DowntimeHours);                         // unchanged by closing
         Assert.Equal(new DateTime(2026, 10, 5, 4, 10, 0, DateTimeKind.Utc), closed.AssignedAt); // earlier timestamps are kept
         Assert.Equal(4, s.Audit.Entries.Count(e => e.Action == BreakdownAuditNames.StageChanged));
     }
@@ -82,7 +86,12 @@ public class MachineBreakdownWorkflowTests
     public async Task Downtime_IsRoundedToOneDecimal_AndNeverNegative()
     {
         var s = Create();
-        var id = (await s.Service.CreateAsync(Report(), 1, null, CancellationToken.None)).MachineBreakdownId;
+        // A breakdown time entered later than the resolution (23:00 IST = 17:30 UTC, resolved at 04:00 UTC).
+        var request = Report();
+        var id = (await s.Service.CreateAsync(new CreateMachineBreakdownRequest
+        {
+            MachineId = request.MachineId, BreakdownDate = request.BreakdownDate, BreakdownTime = new TimeOnly(23, 0), Problem = request.Problem,
+        }, 1, null, CancellationToken.None)).MachineBreakdownId;
         await Advance(s, id, BreakdownStage.Assigned);
         await Advance(s, id, BreakdownStage.MaintenanceStarted);
 
@@ -90,7 +99,16 @@ public class MachineBreakdownWorkflowTests
         var resolved = await Advance(s, id, BreakdownStage.Resolved);
 
         Assert.Equal(0m, resolved.DowntimeHours);
+        Assert.Equal(0m, resolved.RepairHours);
     }
+
+    [Theory] // breakdown date + time are plant (IST, UTC+05:30) local; resolution is UTC
+    [InlineData(2026, 10, 5, 9, 0, "2026-10-05T07:14:00Z", 3.7)]
+    [InlineData(2026, 10, 4, 23, 0, "2026-10-05T02:30:00Z", 9.0)] // across midnight IST
+    [InlineData(2026, 10, 5, 8, 0, "2026-10-05T02:33:00Z", 0.1)]  // 3 min -> 0.05 h rounds up
+    public void DowntimeHours_RunsFromTheBreakdownInPlantTime_ToTheResolution(int y, int m, int d, int hh, int mm, string resolvedUtc, double expected) =>
+        Assert.Equal((decimal)expected, MachineBreakdownRules.DowntimeHours(
+            new DateOnly(y, m, d), new TimeOnly(hh, mm), DateTime.Parse(resolvedUtc, null, System.Globalization.DateTimeStyles.AdjustToUniversal)));
 
     // ================================================================ Closed protection / invalid transitions
 

@@ -143,18 +143,19 @@ internal sealed class InMemoryMoldPmRepository : IMoldPmRepository
     }
 
     public Task<MoldPm> StartAsync(MoldPm pm, byte[] originalRowVersion, Action<Mold> applyToLockedMold, CancellationToken cancellationToken) =>
-        UpdateAsync(pm, originalRowVersion, applyToLockedMold, null, cancellationToken);
+        UpdateAsync(pm, originalRowVersion, (mold, _) => applyToLockedMold(mold), null, cancellationToken);
 
     public Task<MoldPm> CompleteAsync(
-        MoldPm pm, byte[] originalRowVersion, Action<Mold> applyToLockedMold, Func<Mold, CancellationToken, Task> afterSave, CancellationToken cancellationToken) =>
+        MoldPm pm, byte[] originalRowVersion, Action<Mold, int> applyToLockedMold, Func<Mold, CancellationToken, Task> afterSave, CancellationToken cancellationToken) =>
         UpdateAsync(pm, originalRowVersion, applyToLockedMold, afterSave, cancellationToken);
 
     private async Task<MoldPm> UpdateAsync(
-        MoldPm pm, byte[] originalRowVersion, Action<Mold> applyToLockedMold, Func<Mold, CancellationToken, Task>? afterSave, CancellationToken cancellationToken)
+        MoldPm pm, byte[] originalRowVersion, Action<Mold, int> applyToLockedMold, Func<Mold, CancellationToken, Task>? afterSave, CancellationToken cancellationToken)
     {
         var storedMold = _molds.Single(m => m.MoldId == pm.MoldId);
         var locked = MoldCopy(storedMold);
-        applyToLockedMold(locked);
+        var otherInProgress = Pms.Count(p => p.MoldId == pm.MoldId && p.MoldPmId != pm.MoldPmId && p.Status == MoldPmStatus.InProgress);
+        applyToLockedMold(locked, otherInProgress);
 
         var stored = Pms.Single(p => p.MoldPmId == pm.MoldPmId);
         if (!stored.RowVersion.SequenceEqual(originalRowVersion))

@@ -130,12 +130,12 @@ public sealed class MoldPmRepository : IMoldPmRepository
 
     public async Task<MoldPm> StartAsync(MoldPm pm, byte[] originalRowVersion, Action<Mold> applyToLockedMold, CancellationToken cancellationToken)
     {
-        return await UpdateWithLockedMoldAsync(pm, originalRowVersion, applyToLockedMold, afterSave: null,
+        return await UpdateWithLockedMoldAsync(pm, originalRowVersion, (mold, _) => applyToLockedMold(mold), afterSave: null,
             new[] { nameof(MoldPm.Status), nameof(MoldPm.UpdatedAt), nameof(MoldPm.UpdatedBy) }, cancellationToken);
     }
 
     public async Task<MoldPm> CompleteAsync(
-        MoldPm pm, byte[] originalRowVersion, Action<Mold> applyToLockedMold, Func<Mold, CancellationToken, Task> afterSave,
+        MoldPm pm, byte[] originalRowVersion, Action<Mold, int> applyToLockedMold, Func<Mold, CancellationToken, Task> afterSave,
         CancellationToken cancellationToken)
     {
         return await UpdateWithLockedMoldAsync(pm, originalRowVersion, applyToLockedMold, afterSave,
@@ -212,7 +212,7 @@ public sealed class MoldPmRepository : IMoldPmRepository
     // 2. the caller's changes to the locked mold; 3. write ONLY the given PM columns, the caller's row version being the
     // ORIGINAL value in the UPDATE's WHERE clause (stale -> 409, nothing committed); 4. afterSave (evaluation); commit.
     private async Task<MoldPm> UpdateWithLockedMoldAsync(
-        MoldPm pm, byte[] originalRowVersion, Action<Mold> applyToLockedMold, Func<Mold, CancellationToken, Task>? afterSave,
+        MoldPm pm, byte[] originalRowVersion, Action<Mold, int> applyToLockedMold, Func<Mold, CancellationToken, Task>? afterSave,
         IReadOnlyList<string> pmColumns, CancellationToken cancellationToken, IReadOnlyList<MoldPmChecklistItem>? checklistLines = null)
     {
         // The DbContext is configured with EnableRetryOnFailure, so a transaction we start ourselves must run inside
@@ -242,7 +242,12 @@ public sealed class MoldPmRepository : IMoldPmRepository
                     .SingleOrDefaultAsync(cancellationToken)
                     ?? throw new NotFoundException(nameof(Mold), pm.MoldId);
 
-                applyToLockedMold(mold);
+                // Counted while the mold row is locked: every start / complete of this mold's PMs takes the same lock,
+                // so no other PM can be started or completed between this count and the commit.
+                var otherInProgress = await _dbContext.MoldPms.AsNoTracking()
+                    .CountAsync(p => p.MoldId == pm.MoldId && p.MoldPmId != pm.MoldPmId && p.Status == MoldPmStatus.InProgress, cancellationToken);
+
+                applyToLockedMold(mold, otherInProgress);
 
                 header = new MoldPm
                 {

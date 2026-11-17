@@ -46,7 +46,11 @@ public sealed class MachineBreakdownDto
     public DateTime? ClosedAt { get; init; }
     public string? RootCause { get; init; }
     public string? CorrectiveAction { get; init; }
+    /// <summary>Breakdown (reported date + time, plant time) to resolved, in hours - the whole time the machine was down.</summary>
     public decimal? DowntimeHours { get; init; }
+
+    /// <summary>Maintenance started to resolved, in hours (calculated, not stored); null until resolved.</summary>
+    public decimal? RepairHours { get; init; }
 
     public DateTime CreatedAt { get; init; }
     public int? CreatedBy { get; init; }

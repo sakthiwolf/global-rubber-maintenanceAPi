@@ -23,9 +23,11 @@ public interface IMoldRepository
     /// <summary>
     /// Inserts the mold and assigns its MoldCode from the MOLD document sequence, both in ONE transaction: a failed insert
     /// rolls the sequence increment back. Navigations are not saved - only the foreign-key ids. LifeState is read back.
+    /// <paramref name="afterSave"/> runs in the SAME transaction after the insert (the new row is exclusively locked) - the
+    /// automatic Mold PM evaluation of a mold registered with an opening balance.
     /// </summary>
     /// <exception cref="GlobalRubber.MMM.Application.Common.ConflictException">The serial number or issued code already exists.</exception>
-    Task<Mold> AddAsync(Mold mold, CancellationToken cancellationToken);
+    Task<Mold> AddAsync(Mold mold, Func<Mold, CancellationToken, Task>? afterSave, CancellationToken cancellationToken);
 
     /// <summary>
     /// Saves the editable fields (including Status and CurrentUsageShots) plus UpdatedAt/UpdatedBy of a mold loaded
