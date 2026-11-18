@@ -105,6 +105,7 @@ public static class MaintenanceReportQueryBuilder
                 pm.PmNo.ToLower().Contains(search) ||
                 pm.Machine.MachineCode.ToLower().Contains(search) ||
                 pm.Machine.MachineName.ToLower().Contains(search) ||
+                (pm.Title != null && pm.Title.ToLower().Contains(search)) ||
                 (pm.Checklist != null && (pm.Checklist.ChecklistCode.ToLower().Contains(search) || pm.Checklist.ChecklistName.ToLower().Contains(search))) ||
                 (pm.MaintenanceBy != null && pm.MaintenanceBy.ToLower().Contains(search)) ||
                 (pm.Remarks != null && pm.Remarks.ToLower().Contains(search)));
@@ -201,6 +202,7 @@ public static class MaintenanceReportQueryBuilder
                 p.PmNo.ToLower().Contains(search) ||
                 p.Mold.MoldCode.ToLower().Contains(search) ||
                 p.Mold.MoldName.ToLower().Contains(search) ||
+                (p.Title != null && p.Title.ToLower().Contains(search)) ||
                 (p.MaintenanceBy != null && p.MaintenanceBy.ToLower().Contains(search)) ||
                 (p.Remarks != null && p.Remarks.ToLower().Contains(search)));
         }

@@ -130,6 +130,7 @@ public static class MachineReportQueryBuilder
                 pm.PmNo.ToLower().Contains(search) ||
                 pm.Machine.MachineCode.ToLower().Contains(search) ||
                 pm.Machine.MachineName.ToLower().Contains(search) ||
+                (pm.Title != null && pm.Title.ToLower().Contains(search)) ||
                 (pm.Checklist != null && (pm.Checklist.ChecklistCode.ToLower().Contains(search) ||
                                           pm.Checklist.ChecklistName.ToLower().Contains(search))) ||
                 (pm.MaintenanceBy != null && pm.MaintenanceBy.ToLower().Contains(search)) ||

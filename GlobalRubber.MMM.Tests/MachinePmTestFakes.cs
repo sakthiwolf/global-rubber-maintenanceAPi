@@ -156,6 +156,7 @@ internal sealed class InMemoryMachinePmRepository : IMachinePmRepository
         MachinePmBucket.Completed => p.Status == MachinePmStatus.Completed,
         // Migration 025: due open manual PMs (no plan, no frequency).
         MachinePmBucket.OneTime => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && p.ScheduleType == PmScheduleType.Manual,
+        MachinePmBucket.Upcoming => p.Status != MachinePmStatus.Completed && p.ScheduledDate > today,
         _ => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && FrequencyOf(p) == MachinePmBucket.FrequencyOf(bucket),
     };
 
@@ -179,6 +180,7 @@ internal sealed class InMemoryMachinePmRepository : IMachinePmRepository
             Monthly = all.Count(p => InBucket(p, MachinePmBucket.Monthly, today)),
             Yearly = all.Count(p => InBucket(p, MachinePmBucket.Yearly, today)),
             OneTime = all.Count(p => InBucket(p, MachinePmBucket.OneTime, today)),
+            Upcoming = all.Count(p => InBucket(p, MachinePmBucket.Upcoming, today)),
             Completed = all.Count(p => InBucket(p, MachinePmBucket.Completed, today)),
         });
     }
@@ -198,6 +200,27 @@ internal sealed class InMemoryMachinePmRepository : IMachinePmRepository
     public int AddManualCalls { get; private set; }
 
     // Migration 025: one manual PM - MPM-NNNN from the MACHINE_PM sequence, its snapshot lines; nothing else is written.
+    public Task<(IReadOnlyList<MachinePmCalendarPlanSource> Plans, IReadOnlyList<MachinePmCalendarJobSource> Jobs)> GetCalendarSourceAsync(
+        DateOnly from, DateOnly to, CancellationToken cancellationToken)
+    {
+        Machine M(int id) => _data.Machines.Single(m => m.MachineId == id);
+        IReadOnlyList<MachinePmCalendarPlanSource> plans = _data.Checklists
+            .Where(c => c.IsActive && c.AppliesTo == MaintenanceChecklistAppliesTo.Machine && c.Frequency != null && c.MachineId != null)
+            .Select(c => new MachinePmCalendarPlanSource(c.ChecklistId, c.ChecklistName, c.Frequency!, c.MachineId!.Value,
+                M(c.MachineId!.Value).MachineCode, M(c.MachineId!.Value).MachineName, c.CycleAnchor()))
+            .ToList();
+        IReadOnlyList<MachinePmCalendarJobSource> jobs = _data.Pms
+            .Where(p => (p.ScheduledDate >= from && p.ScheduledDate <= to) || p.Status != MachinePmStatus.Completed)
+            .Select(p =>
+            {
+                var checklist = _data.Checklists.FirstOrDefault(c => c.ChecklistId == p.ChecklistId);
+                return new MachinePmCalendarJobSource(p.MachinePmId, p.PmNo, p.MachineId, M(p.MachineId).MachineCode, M(p.MachineId).MachineName,
+                    p.ChecklistId, checklist?.ChecklistName, checklist?.Frequency, p.ScheduleType, p.Title, p.ScheduledDate, p.CompletedDate, p.Status);
+            })
+            .ToList();
+        return Task.FromResult((plans, jobs));
+    }
+
     public Task<MachinePm> AddManualAsync(MachinePm pm, CancellationToken cancellationToken)
     {
         AddManualCalls++;

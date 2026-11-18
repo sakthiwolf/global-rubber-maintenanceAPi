@@ -2,6 +2,7 @@ using GlobalRubber.MMM.Application.Common;
 using GlobalRubber.MMM.Application.DTOs;
 using GlobalRubber.MMM.Application.Interfaces;
 using GlobalRubber.MMM.Application.Interfaces.Repositories;
+using GlobalRubber.MMM.Domain.Common;
 using GlobalRubber.MMM.Domain.Constants;
 using GlobalRubber.MMM.Domain.Entities;
 using GlobalRubber.MMM.Infrastructure.Data;
@@ -71,6 +72,7 @@ public sealed class MachinePmRepository : IMachinePmRepository, IMachinePmNotifi
                 Monthly = g.Count(p => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && p.Checklist!.Frequency == ChecklistFrequency.Monthly),
                 Yearly = g.Count(p => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && p.Checklist!.Frequency == ChecklistFrequency.Yearly),
                 OneTime = g.Count(p => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && p.ScheduleType == PmScheduleType.Manual),
+                Upcoming = g.Count(p => p.Status != MachinePmStatus.Completed && p.ScheduledDate > today),
                 Completed = g.Count(p => p.Status == MachinePmStatus.Completed),
             })
             .FirstOrDefaultAsync(cancellationToken);
@@ -300,6 +302,12 @@ public sealed class MachinePmRepository : IMachinePmRepository, IMachinePmNotifi
             return query.Where(p => p.Status == MachinePmStatus.Completed);
         }
 
+        if (bucket == MachinePmBucket.Upcoming)
+        {
+            // Planned but not due yet: open work scheduled after today, plan occurrences and one-time PMs alike.
+            return query.Where(p => p.Status != MachinePmStatus.Completed && p.ScheduledDate > today);
+        }
+
         if (bucket == MachinePmBucket.OneTime)
         {
             // Migration 025: manual PMs have no plan and so no frequency - their own tab, with the same due-only rule.
@@ -310,6 +318,28 @@ public sealed class MachinePmRepository : IMachinePmRepository, IMachinePmNotifi
         return frequency is null
             ? query
             : query.Where(p => p.Status != MachinePmStatus.Completed && p.ScheduledDate <= today && p.Checklist!.Frequency == frequency);
+    }
+
+    public async Task<(IReadOnlyList<MachinePmCalendarPlanSource> Plans, IReadOnlyList<MachinePmCalendarJobSource> Jobs)> GetCalendarSourceAsync(
+        DateOnly from, DateOnly to, CancellationToken cancellationToken)
+    {
+        var plans = await _dbContext.MaintenanceChecklists.AsNoTracking()
+            .Where(c => c.IsActive && c.AppliesTo == MaintenanceChecklistAppliesTo.Machine && c.Frequency != null && c.MachineId != null)
+            .Select(c => new { c.ChecklistId, c.ChecklistName, c.Frequency, MachineId = c.MachineId!.Value, c.Machine!.MachineCode, c.Machine.MachineName, c.StartDate, c.CreatedAt })
+            .ToListAsync(cancellationToken);
+
+        var jobs = await _dbContext.MachinePms.AsNoTracking()
+            .Where(p => (p.ScheduledDate >= from && p.ScheduledDate <= to) || p.Status != MachinePmStatus.Completed)
+            .Select(p => new MachinePmCalendarJobSource(
+                p.MachinePmId, p.PmNo, p.MachineId, p.Machine.MachineCode, p.Machine.MachineName, p.ChecklistId,
+                p.Checklist != null ? p.Checklist.ChecklistName : null, p.Checklist != null ? p.Checklist.Frequency : null,
+                p.ScheduleType, p.Title, p.ScheduledDate, p.CompletedDate, p.Status))
+            .ToListAsync(cancellationToken);
+
+        // The cycle anchor as MaintenanceChecklist.CycleAnchor(): the start date, or the plant date it was created.
+        return (plans.Select(c => new MachinePmCalendarPlanSource(
+                c.ChecklistId, c.ChecklistName, c.Frequency!, c.MachineId, c.MachineCode, c.MachineName,
+                c.StartDate ?? PlantTime.ToPlantDate(c.CreatedAt))).ToList(), jobs);
     }
 
     // 2601 = unique index violation, 2627 = unique/primary key constraint violation.

@@ -34,4 +34,11 @@ public interface IMachinePmRepository
     /// in one transaction. Nothing else is written - no successor, no machine date.
     /// </summary>
     Task<MachinePm> AddManualAsync(MachinePm pm, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The calendar's source data (read-only): every ACTIVE machine plan (with its cycle anchor), and every PM job that is
+    /// scheduled between <paramref name="from"/> and <paramref name="to"/> or is still open (the start of each plan's projection).
+    /// </summary>
+    Task<(IReadOnlyList<MachinePmCalendarPlanSource> Plans, IReadOnlyList<MachinePmCalendarJobSource> Jobs)> GetCalendarSourceAsync(
+        DateOnly from, DateOnly to, CancellationToken cancellationToken);
 }

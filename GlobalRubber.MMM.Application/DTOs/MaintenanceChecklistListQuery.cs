@@ -5,7 +5,7 @@ namespace GlobalRubber.MMM.Application.DTOs;
 /// <summary>Query string of GET /api/v1/maintenance-checklists: paging plus optional filters.</summary>
 public sealed class MaintenanceChecklistListQuery : PaginationRequest
 {
-    /// <summary>Case-insensitive "contains" match on the code or name.</summary>
+    /// <summary>Case-insensitive "contains" match on the code, name, frequency or the plan's machine (code / name).</summary>
     public string? Search { get; set; }
 
     /// <summary>

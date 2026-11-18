@@ -57,7 +57,11 @@ public sealed class MaintenanceChecklistRepository : IMaintenanceChecklistReposi
         {
             // Explicit ToLower rather than relying on the column collation being case-insensitive.
             var lowered = search.ToLower();
-            query = query.Where(c => c.ChecklistCode.ToLower().Contains(lowered) || c.ChecklistName.ToLower().Contains(lowered));
+            // Code, name, frequency and the plan's machine (code and name).
+            query = query.Where(c => c.ChecklistCode.ToLower().Contains(lowered)
+                                     || c.ChecklistName.ToLower().Contains(lowered)
+                                     || (c.Frequency != null && c.Frequency.ToLower().Contains(lowered))
+                                     || (c.Machine != null && (c.Machine.MachineCode.ToLower().Contains(lowered) || c.Machine.MachineName.ToLower().Contains(lowered))));
         }
 
         var ordered = query.OrderBy(c => c.ChecklistName).ThenBy(c => c.ChecklistId);

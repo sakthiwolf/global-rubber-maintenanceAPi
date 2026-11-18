@@ -53,7 +53,13 @@ public sealed class SparePartUsageRepository : ISparePartUsageRepository
         if (!string.IsNullOrEmpty(search))
         {
             var lowered = search.ToLower();
-            q = q.Where(u => u.UsageNo.ToLower().Contains(lowered) || (u.ReferenceNo != null && u.ReferenceNo.ToLower().Contains(lowered)));
+            // Everything the list shows: usage no, PM no (reference), the spare part, and the machine / mould.
+            q = q.Where(u => u.UsageNo.ToLower().Contains(lowered)
+                             || (u.ReferenceNo != null && u.ReferenceNo.ToLower().Contains(lowered))
+                             || u.SparePart.SparePartCode.ToLower().Contains(lowered)
+                             || u.SparePart.SparePartName.ToLower().Contains(lowered)
+                             || (u.Machine != null && (u.Machine.MachineCode.ToLower().Contains(lowered) || u.Machine.MachineName.ToLower().Contains(lowered)))
+                             || (u.Mold != null && (u.Mold.MoldCode.ToLower().Contains(lowered) || u.Mold.MoldName.ToLower().Contains(lowered))));
         }
 
         var total = await q.CountAsync(cancellationToken);

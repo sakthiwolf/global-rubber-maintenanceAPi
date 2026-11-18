@@ -51,7 +51,12 @@ public sealed class MoldRepository : IMoldRepository
         {
             // Explicit ToLower rather than relying on the column collation being case-insensitive.
             var lowered = search.ToLower();
-            query = query.Where(m => m.MoldCode.ToLower().Contains(lowered) || m.MoldName.ToLower().Contains(lowered));
+            // Code, name, part no / description and the product (also used by the header search).
+            query = query.Where(m => m.MoldCode.ToLower().Contains(lowered)
+                                     || m.MoldName.ToLower().Contains(lowered)
+                                     || (m.PartNo != null && m.PartNo.ToLower().Contains(lowered))
+                                     || (m.PartDescription != null && m.PartDescription.ToLower().Contains(lowered))
+                                     || m.Product.ProductName.ToLower().Contains(lowered));
         }
 
         var ordered = query.OrderBy(m => m.MoldName).ThenBy(m => m.MoldId);

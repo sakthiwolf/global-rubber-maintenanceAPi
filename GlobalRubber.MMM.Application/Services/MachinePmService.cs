@@ -78,6 +78,19 @@ public sealed class MachinePmService : IMachinePmService
     public Task<MachinePmLookupsDto> GetLookupsAsync(CancellationToken cancellationToken) =>
         _repository.GetLookupsAsync(cancellationToken);
 
+    public async Task<MachinePmCalendarDto> GetCalendarAsync(int? year, CancellationToken cancellationToken)
+    {
+        var today = _dateTimeProvider.Today; // plant (IST) date
+        var y = year ?? today.Year;
+        if (y is < 2000 or > 2100)
+        {
+            throw new ValidationException("Year must be between 2000 and 2100.");
+        }
+
+        var (plans, jobs) = await _repository.GetCalendarSourceAsync(new DateOnly(y, 1, 1), new DateOnly(y, 12, 31), cancellationToken);
+        return MachinePmCalendarBuilder.Build(y, today, plans, jobs);
+    }
+
     public async Task<MachinePmDto> CompleteAsync(
         int machinePmId, CompleteMachinePmRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken)
     {

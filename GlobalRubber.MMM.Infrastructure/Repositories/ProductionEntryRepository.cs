@@ -51,7 +51,15 @@ public sealed class ProductionEntryRepository : IProductionEntryRepository
         {
             // Explicit ToLower rather than relying on the column collation being case-insensitive.
             var lowered = search.ToLower();
-            query = query.Where(e => e.EntryNo.ToLower().Contains(lowered));
+            // Everything the list shows: entry no, shift, machine, mould and product (code and name).
+            query = query.Where(e => e.EntryNo.ToLower().Contains(lowered)
+                                     || e.Shift.ToLower().Contains(lowered)
+                                     || e.Machine.MachineCode.ToLower().Contains(lowered)
+                                     || e.Machine.MachineName.ToLower().Contains(lowered)
+                                     || e.Mold.MoldCode.ToLower().Contains(lowered)
+                                     || e.Mold.MoldName.ToLower().Contains(lowered)
+                                     || e.Product.ProductCode.ToLower().Contains(lowered)
+                                     || e.Product.ProductName.ToLower().Contains(lowered));
         }
 
         // Newest first (analysis 6.1) - in the order the entries were saved, as the template lists them.

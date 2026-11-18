@@ -36,6 +36,8 @@ public static class MoldReportQueryBuilder
             source = source.Where(m =>
                 m.MoldCode.ToLower().Contains(search) ||
                 m.MoldName.ToLower().Contains(search) ||
+                (m.PartNo != null && m.PartNo.ToLower().Contains(search)) ||
+                (m.PartDescription != null && m.PartDescription.ToLower().Contains(search)) ||
                 m.MoldType.ToLower().Contains(search) ||
                 (m.Location != null && m.Location.ToLower().Contains(search)) ||
                 m.Product.ProductCode.ToLower().Contains(search) ||
@@ -124,6 +126,8 @@ public static class MoldReportQueryBuilder
             source = source.Where(m =>
                 m.MoldCode.ToLower().Contains(search) ||
                 m.MoldName.ToLower().Contains(search) ||
+                (m.PartNo != null && m.PartNo.ToLower().Contains(search)) ||
+                (m.PartDescription != null && m.PartDescription.ToLower().Contains(search)) ||
                 m.Product.ProductCode.ToLower().Contains(search) ||
                 m.Product.ProductName.ToLower().Contains(search));
         }
@@ -210,6 +214,8 @@ public static class MoldReportQueryBuilder
             source = source.Where(m =>
                 m.MoldCode.ToLower().Contains(search) ||
                 m.MoldName.ToLower().Contains(search) ||
+                (m.PartNo != null && m.PartNo.ToLower().Contains(search)) ||
+                (m.PartDescription != null && m.PartDescription.ToLower().Contains(search)) ||
                 m.MoldType.ToLower().Contains(search) ||
                 m.Product.ProductCode.ToLower().Contains(search) ||
                 m.Product.ProductName.ToLower().Contains(search));
@@ -303,6 +309,7 @@ public static class MoldReportQueryBuilder
                 p.PmNo.ToLower().Contains(search) ||
                 p.Mold.MoldCode.ToLower().Contains(search) ||
                 p.Mold.MoldName.ToLower().Contains(search) ||
+                (p.Title != null && p.Title.ToLower().Contains(search)) ||
                 (p.MaintenanceBy != null && p.MaintenanceBy.ToLower().Contains(search)) ||
                 (p.Remarks != null && p.Remarks.ToLower().Contains(search)));
         }

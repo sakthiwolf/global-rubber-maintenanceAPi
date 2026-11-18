@@ -77,6 +77,9 @@ public sealed class MachinePmBucketCountsDto
     /// <summary>Migration 025: due open MANUAL (one-time) PMs - scheduled on or before today, overdue included.</summary>
     public int OneTime { get; init; }
 
+    /// <summary>Open PMs (plan occurrences and one-time) scheduled after today - planned, not due yet.</summary>
+    public int Upcoming { get; init; }
+
     /// <summary>Completed, any frequency.</summary>
     public int Completed { get; init; }
 }

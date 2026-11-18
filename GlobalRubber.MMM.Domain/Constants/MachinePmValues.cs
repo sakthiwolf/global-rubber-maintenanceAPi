@@ -37,7 +37,13 @@ public static class MachinePmBucket
     /// </summary>
     public const string OneTime = "one-time";
 
-    public static readonly IReadOnlyList<string> All = new[] { Daily, Weekly, Monthly, Yearly, OneTime, Completed };
+    /// <summary>
+    /// Approved 2026-11-18: open PMs (plan occurrences and one-time) scheduled AFTER today (IST) - the work that is
+    /// planned but not due yet, which the frequency tabs keep hidden until its date.
+    /// </summary>
+    public const string Upcoming = "upcoming";
+
+    public static readonly IReadOnlyList<string> All = new[] { Daily, Weekly, Monthly, Yearly, OneTime, Upcoming, Completed };
 
     /// <summary>The checklist frequency a frequency tab stands for (ChecklistFrequency values); null for completed.</summary>
     public static string? FrequencyOf(string bucket) => bucket switch

@@ -589,7 +589,6 @@ public class MachinePmServiceTests
     [InlineData("today")]
     [InlineData("week")]
     [InlineData("overdue")]
-    [InlineData("upcoming")]
     [InlineData("hourly")]
     public async Task TheOldCalendarTabs_AndUnknownTabs_Are400(string bucket)
     {
@@ -597,7 +596,8 @@ public class MachinePmServiceTests
 
         var ex = await Assert.ThrowsAsync<ValidationException>(() => s.Service.GetAllAsync(new MachinePmListQuery { Bucket = bucket }, CancellationToken.None));
 
-        Assert.Contains("Bucket must be one of: daily, weekly, monthly, yearly, one-time, completed.", ex.Errors);
+        // "upcoming" is a tab again (approved 2026-11-18) - see MachinePmUpcomingAndCalendarTests.
+        Assert.Contains("Bucket must be one of: daily, weekly, monthly, yearly, one-time, upcoming, completed.", ex.Errors);
     }
 
     // ---------------------------------------------------------------- the successor is hidden until its date (items 1-8, 13, 14)

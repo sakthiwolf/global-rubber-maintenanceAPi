@@ -54,7 +54,11 @@ public sealed class MachineRepository : IMachineRepository
         {
             // Explicit ToLower rather than relying on the column collation being case-insensitive.
             var lowered = search.ToLower();
-            query = query.Where(m => m.MachineCode.ToLower().Contains(lowered) || m.MachineName.ToLower().Contains(lowered));
+            // Code, name, type and location (also used by the header search).
+            query = query.Where(m => m.MachineCode.ToLower().Contains(lowered)
+                                     || m.MachineName.ToLower().Contains(lowered)
+                                     || m.MachineType.ToLower().Contains(lowered)
+                                     || m.Location.ToLower().Contains(lowered));
         }
 
         var ordered = query.OrderBy(m => m.MachineName).ThenBy(m => m.MachineId);

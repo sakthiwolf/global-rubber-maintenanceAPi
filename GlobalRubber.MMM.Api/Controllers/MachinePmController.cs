@@ -94,6 +94,23 @@ public sealed class MachinePmController : BaseApiController
         return Ok(ApiResponse<MachinePmLookupsDto>.Ok(lookups, "Machine maintenance lookups retrieved successfully."));
     }
 
+    /// <summary>
+    /// The year's machine PM calendar in the F05 layout: one row per machine with every PM date of the year - real jobs
+    /// with their status, and projected "Planned" occurrences from each plan's cycle. Read-only. Year defaults to this year.
+    /// </summary>
+    [HttpGet("calendar")]
+    [RequirePermission(ModuleCodes.TrnMachinePm, PermissionAction.View)]
+    [ProducesResponseType(typeof(ApiResponse<MachinePmCalendarDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ApiResponse<MachinePmCalendarDto>>> GetCalendar([FromQuery] int? year, CancellationToken cancellationToken)
+    {
+        var calendar = await _machinePmService.GetCalendarAsync(year, cancellationToken);
+
+        return Ok(ApiResponse<MachinePmCalendarDto>.Ok(calendar, "Machine maintenance calendar retrieved successfully."));
+    }
+
     /// <summary>One PM with its checklist snapshot and the rowVersion needed to complete it. 404 if it does not exist.</summary>
     [HttpGet("{id:int}")]
     [RequirePermission(ModuleCodes.TrnMachinePm, PermissionAction.View)]

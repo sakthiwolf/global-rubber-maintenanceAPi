@@ -22,6 +22,13 @@ public interface IMachinePmService
     Task<MachinePmLookupsDto> GetLookupsAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// The year's PM calendar (F05 layout): real jobs with their status plus projected "Planned" occurrences. Year defaults
+    /// to the current plant year; it must be between 2000 and 2100.
+    /// </summary>
+    /// <exception cref="GlobalRubber.MMM.Application.Common.ValidationException">The year is out of range.</exception>
+    Task<MachinePmCalendarDto> GetCalendarAsync(int? year, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Completes a PM and, when its checklist is still an active Machine checklist, creates exactly one successor - all in
     /// one transaction. Writes MachinePmCompleted (and MachinePmScheduled for the successor).
     /// </summary>

@@ -8,7 +8,7 @@ namespace GlobalRubber.MMM.Application.DTOs;
 /// </summary>
 public sealed class ProductionEntryListQuery : PaginationRequest
 {
-    /// <summary>Case-insensitive "contains" match on the entry number.</summary>
+    /// <summary>Case-insensitive "contains" match on the entry number, shift, machine, mould or product (code / name).</summary>
     public string? Search { get; set; }
 
     /// <summary>Entries on or after this date.</summary>
