@@ -33,7 +33,8 @@ public class MachinePmServiceTests
     }
 
     private static CompleteMachinePmRequest Done(MachinePm pm, string? by = "Ravi", string? remarks = null, params (int Line, bool Checked)[] ticks) =>
-        new() { MaintenanceBy = by, Remarks = remarks, RowVersion = Convert.ToBase64String(pm.RowVersion), Results = ticks.Select(t => new MachinePmChecklistResultRequest { MachinePmChecklistId = t.Line, IsChecked = t.Checked }).ToList() };
+        // A7 (approved 2026-11-18): no explicit ticks = every point done (an unticked point needs Remarks).
+        new() { MaintenanceBy = by, Remarks = remarks, RowVersion = Convert.ToBase64String(pm.RowVersion), Results = (ticks.Length == 0 ? pm.ChecklistItems.Select(i => (i.MachinePmChecklistId, true)).ToArray() : ticks).Select(t => new MachinePmChecklistResultRequest { MachinePmChecklistId = t.Item1, IsChecked = t.Item2 }).ToList() };
 
     private static Task<MachinePmDto> Complete(Sut s, MachinePm pm, CompleteMachinePmRequest? request = null) =>
         s.Service.CompleteAsync(pm.MachinePmId, request ?? Done(pm), 1, "10.0.0.5", CancellationToken.None);
@@ -263,7 +264,7 @@ public class MachinePmServiceTests
         c.Items = new List<MaintenanceChecklistItem> { new() { ChecklistItemId = 777, ChecklistId = c.ChecklistId, SortOrder = 1, ItemLabel = "New step" } };
         var s = Create(data, D(2026, 9, 25));
 
-        await Complete(s, pm, Done(pm, ticks: (pm.ChecklistItems[0].MachinePmChecklistId, true)));
+        await Complete(s, pm, Done(pm, remarks: "one point pending", ticks: (pm.ChecklistItems[0].MachinePmChecklistId, true)));
 
         var next = Successor(s, c);
         Assert.Equal(("MPM-0002", 1, (int?)c.ChecklistId, MachinePmStatus.Scheduled), (next.PmNo, next.MachineId, next.ChecklistId, next.Status));
@@ -284,7 +285,7 @@ public class MachinePmServiceTests
         var c = data.Checklist("Daily", D(2026, 9, 25));
         var pm = data.Open(c, D(2026, 9, 25));
         var s = Create(data, D(2026, 9, 25));
-        await Complete(s, pm, Done(pm, ticks: (pm.ChecklistItems[1].MachinePmChecklistId, true)));
+        await Complete(s, pm, Done(pm, remarks: "one point pending", ticks: (pm.ChecklistItems[1].MachinePmChecklistId, true)));
         var history = string.Join("|", s.Repo.Stored(pm.MachinePmId).ChecklistItems.Select(l => $"{l.MachinePmChecklistId}:{l.ItemLabel}:{l.IsChecked}"));
 
         s.Clock.SetToday(D(2026, 9, 26));

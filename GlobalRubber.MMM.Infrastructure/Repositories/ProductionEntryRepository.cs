@@ -109,7 +109,7 @@ public sealed class ProductionEntryRepository : IProductionEntryRepository
             {
                 MoldId = m.MoldId, MoldCode = m.MoldCode, MoldName = m.MoldName, ProductId = m.ProductId, CavityCount = m.CavityCount,
                 CurrentUsageShots = m.CurrentUsageShots, MaximumShots = m.MaximumShots, WarningShots = m.WarningShots,
-                ReplacementShots = m.ReplacementShots, LifeState = m.LifeState, Status = m.Status,
+                ReplacementShots = m.ReplacementShots, LifeState = m.LifeState, Status = m.Status, Location = m.Location,
             })
             .ToListAsync(cancellationToken);
 
@@ -184,6 +184,65 @@ public sealed class ProductionEntryRepository : IProductionEntryRepository
         Detach(entry, mold);
         entry.Mold = mold!;
         return entry;
+    }
+
+    public async Task<ProductionEntry> CancelAsync(
+        int productionEntryId, int moldId, byte[] originalRowVersion, Action<ProductionEntry, Mold> applyToLocked, CancellationToken cancellationToken)
+    {
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+        Mold? mold = null;
+        ProductionEntry? entry = null;
+
+        try
+        {
+            await strategy.ExecuteAsync(async () =>
+            {
+                if (entry is not null) Detach(entry, mold); // a retry starts clean
+
+                var ownsTransaction = _dbContext.Database.CurrentTransaction is null;
+                await using var transaction = ownsTransaction ? await _dbContext.Database.BeginTransactionAsync(cancellationToken) : null;
+
+                foreach (var tracked in _dbContext.ChangeTracker.Entries<Mold>().Where(e => e.Entity.MoldId == moldId).ToList())
+                {
+                    tracked.State = EntityState.Detached;
+                }
+
+                // The same lock Production Entry takes: no save can interleave with the usage correction.
+                mold = await _dbContext.Molds
+                    .FromSqlInterpolated($"SELECT * FROM masters.mold_master WITH (UPDLOCK, ROWLOCK) WHERE mold_id = {moldId}")
+                    .SingleOrDefaultAsync(cancellationToken)
+                    ?? throw new NotFoundException(nameof(Mold), moldId);
+
+                entry = await _dbContext.ProductionEntries.SingleOrDefaultAsync(e => e.ProductionEntryId == productionEntryId, cancellationToken)
+                    ?? throw new NotFoundException(nameof(ProductionEntry), productionEntryId);
+
+                // The caller's version is the ORIGINAL value in the UPDATE's WHERE clause.
+                _dbContext.Entry(entry).Property(e => e.RowVersion).OriginalValue = originalRowVersion;
+
+                applyToLocked(entry, mold); // business rules - may throw, which rolls everything back
+
+                try
+                {
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    throw new ConflictException("The production entry was modified by another user. Refresh it and try again.");
+                }
+
+                if (transaction is not null)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                }
+            });
+        }
+        finally
+        {
+            if (entry is not null) Detach(entry, mold);
+        }
+
+        var result = await GetByIdAsync(productionEntryId, cancellationToken);
+        return result!;
     }
 
     private void Detach(ProductionEntry entry, Mold? mold)

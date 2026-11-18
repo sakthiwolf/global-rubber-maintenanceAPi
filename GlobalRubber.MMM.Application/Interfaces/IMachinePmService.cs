@@ -35,5 +35,8 @@ public interface IMachinePmService
     /// <exception cref="GlobalRubber.MMM.Application.Common.NotFoundException">No PM exists with the given id.</exception>
     /// <exception cref="GlobalRubber.MMM.Application.Common.ValidationException">Maintenance By, remarks, a checklist result or the row version is invalid.</exception>
     /// <exception cref="GlobalRubber.MMM.Application.Common.ConflictException">It is already completed, or it was modified after it was read.</exception>
+    /// <summary>Scheduled -> In Progress; the machine goes under Maintenance (A1). 409 unless the PM is Scheduled.</summary>
+    Task<MachinePmDto> StartAsync(int machinePmId, StartMachinePmRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken);
+
     Task<MachinePmDto> CompleteAsync(int machinePmId, CompleteMachinePmRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken);
 }

@@ -113,7 +113,7 @@ public class MachinePmEndpointTests : IClassFixture<ApiWebApplicationFactory>
 
         var response = await h.Client.PutAsync($"{Url}/{pm.MachinePmId}/complete", Json(JsonSerializer.Serialize(new
         {
-            maintenanceBy = "Ravi", rowVersion = Convert.ToBase64String(pm.RowVersion), completedDate = "2020-01-01", scheduledDate = "2020-01-01",
+            maintenanceBy = "Ravi", remarks = "done", rowVersion = Convert.ToBase64String(pm.RowVersion), completedDate = "2020-01-01", scheduledDate = "2020-01-01",
             status = "Scheduled", pmNo = "HACK", machineId = 2, checklistId = 99,
         })));
 
@@ -176,7 +176,6 @@ public class MachinePmEndpointTests : IClassFixture<ApiWebApplicationFactory>
         Assert.Equal(HttpStatusCode.MethodNotAllowed, post.StatusCode);
         Assert.Equal(HttpStatusCode.MethodNotAllowed, (await h.Client.PutAsync($"{Url}/{pm.MachinePmId}", Json("{}"))).StatusCode);
         Assert.Equal(HttpStatusCode.MethodNotAllowed, (await h.Client.DeleteAsync($"{Url}/{pm.MachinePmId}")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await h.Client.PutAsync($"{Url}/{pm.MachinePmId}/start", Json("{}"))).StatusCode);
         Assert.Single(h.Data.Pms);
         Assert.Empty(h.Authorization.Checks);
     }

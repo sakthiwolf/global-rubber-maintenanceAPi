@@ -2,8 +2,8 @@ namespace GlobalRubber.MMM.Application.DTOs;
 
 /// <summary>
 /// Request body for PUT /api/v1/machine-maintenance/{id}/complete: who performed the maintenance, the ticks for the PM's
-/// own snapshot lines, the remarks, and the row version the caller last read. Unchecked items are allowed (Q-17); lines
-/// not listed are saved unchecked. The completion date is today (server clock, plant time zone) - never client-controlled.
+/// own snapshot lines, the remarks, and the row version the caller last read. Unchecked items are allowed only with
+/// Remarks (approved 2026-11-18, A7); lines not listed are saved unchecked. The completion date is today (server clock, plant time zone) - never client-controlled.
 /// </summary>
 public sealed class CompleteMachinePmRequest
 {
@@ -24,4 +24,10 @@ public sealed class MachinePmChecklistResultRequest
 {
     public int MachinePmChecklistId { get; init; }
     public bool IsChecked { get; init; }
+}
+
+/// <summary>Body of PUT /api/v1/machine-maintenance/{id}/start (approved 2026-11-18, A1) - only the concurrency token.</summary>
+public sealed class StartMachinePmRequest
+{
+    public string? RowVersion { get; init; }
 }

@@ -30,6 +30,14 @@ public interface IMachinePmRepository
     Task<MachinePm> CompleteAsync(MachinePm pm, byte[] originalRowVersion, MachinePmCompletionPlan plan, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Approved 2026-11-18 (A1): starts a PM as ONE unit - the machine row is locked, the PM's status / updated columns are
+    /// written (guarded by <paramref name="originalRowVersion"/>) and <paramref name="applyToLockedMachine"/> sets the
+    /// machine's operational status.
+    /// </summary>
+    /// <exception cref="GlobalRubber.MMM.Application.Common.ConflictException">The PM's row version no longer matches.</exception>
+    Task<MachinePm> StartAsync(MachinePm pm, byte[] originalRowVersion, Action<Machine> applyToLockedMachine, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Migration 025: inserts ONE manual PM with its checklist snapshot and issues its number from the MACHINE_PM sequence,
     /// in one transaction. Nothing else is written - no successor, no machine date.
     /// </summary>

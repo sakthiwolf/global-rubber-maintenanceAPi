@@ -19,6 +19,17 @@ public static class MachinePmRules
         return dates.Count == 0 ? null : dates.Min();
     }
 
-    public static string OperationalStatusAfterCompletion(string currentStatus) =>
-        currentStatus == MachineOperationalStatus.Maintenance ? MachineOperationalStatus.Running : currentStatus;
+    /// <summary>
+    /// Approved 2026-11-18 (A1): starting a PM puts a Running or Idle machine under Maintenance. A machine in Breakdown
+    /// stays in Breakdown - the breakdown is the more urgent state and its own workflow releases it.
+    /// </summary>
+    public static string OperationalStatusAfterStart(string currentStatus) =>
+        currentStatus is MachineOperationalStatus.Running or MachineOperationalStatus.Idle ? MachineOperationalStatus.Maintenance : currentStatus;
+
+    /// <summary>
+    /// Maintenance becomes Running on completion (BR-23) - but only when no OTHER PM of the machine is still in progress
+    /// (approved 2026-11-18, A1); any other status is left alone.
+    /// </summary>
+    public static string OperationalStatusAfterCompletion(string currentStatus, int otherPmsInProgress = 0) =>
+        currentStatus == MachineOperationalStatus.Maintenance && otherPmsInProgress == 0 ? MachineOperationalStatus.Running : currentStatus;
 }

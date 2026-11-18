@@ -244,6 +244,29 @@ internal sealed class InMemoryMachinePmRepository : IMachinePmRepository
         return Task.FromResult(pm);
     }
 
+    public Task<MachinePm> StartAsync(MachinePm pm, byte[] originalRowVersion, Action<Machine> applyToLockedMachine, CancellationToken cancellationToken)
+    {
+        var stored = Stored(pm.MachinePmId);
+        if (!stored.RowVersion.SequenceEqual(originalRowVersion))
+        {
+            throw new ConflictException("The maintenance record was modified by another user. Refresh it and try again.");
+        }
+
+        var machine = StoredMachine(pm.MachineId);
+        var locked = new Machine { MachineId = machine.MachineId, MachineCode = machine.MachineCode, OperationalStatus = machine.OperationalStatus, UpdatedAt = machine.UpdatedAt, UpdatedBy = machine.UpdatedBy };
+        applyToLockedMachine(locked);
+
+        stored.Status = pm.Status;
+        stored.UpdatedAt = pm.UpdatedAt;
+        stored.UpdatedBy = pm.UpdatedBy;
+        stored.RowVersion = new[] { (byte)(stored.RowVersion[0] + 1) };
+        machine.OperationalStatus = locked.OperationalStatus;
+        machine.UpdatedAt = locked.UpdatedAt;
+        machine.UpdatedBy = locked.UpdatedBy;
+
+        return Task.FromResult(Clone(stored));
+    }
+
     public Task<MachinePm> CompleteAsync(MachinePm pm, byte[] originalRowVersion, MachinePmCompletionPlan plan, CancellationToken cancellationToken)
     {
         CompleteCalls++;
@@ -287,7 +310,8 @@ internal sealed class InMemoryMachinePmRepository : IMachinePmRepository
             var openDueDates = _data.Pms.Where(p => p != stored && IsOpen(p) && p.MachineId == machine.MachineId && p.ScheduleType == PmScheduleType.Automatic).Select(p => p.ScheduledDate)
                 .Concat(successor is not null && successor.MachineId == machine.MachineId ? new[] { successor.ScheduledDate } : Array.Empty<DateOnly>())
                 .OrderBy(d => d).ToList();
-            plan.ApplyToLockedMachine(machine, openDueDates);
+            var otherInProgress = _data.Pms.Count(p => p != stored && p.MachineId == machine.MachineId && p.Status == MachinePmStatus.InProgress);
+            plan.ApplyToLockedMachine(machine, openDueDates, otherInProgress);
         }
 
         if (FailNextSave)

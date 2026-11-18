@@ -25,4 +25,13 @@ public interface IProductionEntryRepository
     /// <exception cref="GlobalRubber.MMM.Application.Common.NotFoundException">The mold no longer exists.</exception>
     Task<ProductionEntry> AddAsync(
         ProductionEntry entry, Action<Mold> applyToLockedMold, Func<Mold, CancellationToken, Task>? afterSave, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Approved 2026-11-18 (A4): cancels an entry as ONE unit - the mold row is locked, then the entry is read;
+    /// <paramref name="applyToLocked"/> (the service's rules) sets the entry's status / remarks and the mold's usage /
+    /// status; both are written, the entry guarded by <paramref name="originalRowVersion"/>.
+    /// </summary>
+    /// <exception cref="GlobalRubber.MMM.Application.Common.ConflictException">The entry's row version no longer matches.</exception>
+    Task<ProductionEntry> CancelAsync(
+        int productionEntryId, int moldId, byte[] originalRowVersion, Action<ProductionEntry, Mold> applyToLocked, CancellationToken cancellationToken);
 }

@@ -184,14 +184,14 @@ public class MoldServiceTests
     }
 
     [Fact]
-    public async Task Create_RequiresTheBR06FieldsAndStatus_WithAllErrors_WritingNothing()
+    public async Task Create_RequiresTheBR06Fields_WithAllErrors_WritingNothing() // A2/A5: status and maximum are optional
     {
         var s = Create();
 
         var ex = await Assert.ThrowsAsync<ValidationException>(() => s.Service.CreateAsync(
             new CreateMoldRequest { MoldName = " ", ProductId = 0, MoldType = "" }, 1, null, CancellationToken.None));
 
-        foreach (var expected in new[] { "MoldName is required.", "ProductId is required.", "MoldType is required.", "MaximumShots is required.", "WarningShots is required.", "ReplacementShots is required.", "Status is required." })
+        foreach (var expected in new[] { "MoldName is required.", "ProductId is required.", "MoldType is required.", "WarningShots is required.", "ReplacementShots is required." })
         {
             Assert.Contains(expected, ex.Errors);
         }
@@ -283,7 +283,7 @@ public class MoldServiceTests
         Assert.Equal("Karthik Raja", dto.ResponsibleEmployeeName);
         Assert.Equal(460000, dto.CurrentUsageShots);
         Assert.Equal("Warning", dto.LifeState);          // recomputed from the new usage
-        Assert.Equal("Maintenance", dto.Status);
+        Assert.Equal("In Production", dto.Status);       // A2: system-managed - a requested "Maintenance" is ignored
         var stored = s.Molds.Stored(1);
         Assert.Equal("MLD-0001", stored.MoldCode);
         Assert.Equal(1, stored.CreatedBy);
@@ -313,11 +313,11 @@ public class MoldServiceTests
         var entry = Assert.Single(s.Audit.Entries);
         Assert.Equal("MoldUpdated", entry.Action);
         Assert.Equal("MLD-0001", entry.RecordRef);
-        Assert.Contains("Changed: product_code, current_usage_shots, responsible_employee_code, status.", entry.Description);
+        Assert.Contains("Changed: product_code, current_usage_shots, responsible_employee_code.", entry.Description);
         Assert.Contains(entry.Details, d => d is { FieldName: "current_usage_shots", OldValue: "100000", NewValue: "120000" });
         Assert.Contains(entry.Details, d => d is { FieldName: "product_code", OldValue: "PRD-0001", NewValue: "PRD-0002" });
         Assert.Contains(entry.Details, d => d is { FieldName: "responsible_employee_code", OldValue: "EMP-0001", NewValue: null });
-        Assert.Contains(entry.Details, d => d is { FieldName: "status", OldValue: "In Production", NewValue: "Available" });
+        Assert.DoesNotContain(entry.Details, d => d.FieldName == "status"); // A2: a requested "Available" is ignored
     }
 
     [Fact]

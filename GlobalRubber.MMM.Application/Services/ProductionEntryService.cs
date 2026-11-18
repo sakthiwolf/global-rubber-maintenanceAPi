@@ -19,7 +19,8 @@ namespace GlobalRubber.MMM.Application.Services;
 /// entry took (production qty / the mold's cavities, rounded up - Q-01) to the mold's usage, stores usage before/after
 /// (in shots), and re-evaluates the mold status. In the same transaction the mold
 /// is evaluated for usage-based PM (<see cref="IMoldPmEvaluator"/>: warning / automatic PM). Good qty is computed by SQL
-/// Server. No date limit, no duplicate date+shift+machine+mold rule, no edit or cancel - all open in Q-14.
+/// Server. No date limit and no duplicate date+shift+machine+mold rule (Q-14). No edit; a wrong entry is CANCELLED
+/// (approved 2026-11-18, A4): its shots come back off the mold and it stays on record as Cancelled, out of the reports.
 /// </summary>
 public sealed class ProductionEntryService : IProductionEntryService
 {
@@ -120,7 +121,7 @@ public sealed class ProductionEntryService : IProductionEntryService
             ProductionQty = input.ProductionQty,
             RejectedQty = input.RejectedQty,
             Remarks = input.Remarks,
-            Status = ProductionEntryStatus.Saved, // the only status ever written (Q-14)
+            Status = ProductionEntryStatus.Saved, // Cancelled only through CancelAsync (A4)
             CreatedAt = now,
             CreatedBy = actingUserId,
         };
@@ -193,6 +194,93 @@ public sealed class ProductionEntryService : IProductionEntryService
         await _moldPmEvaluator.WriteAuditAsync(evaluation, $"production entry {created.EntryNo} by {actorName}", ipAddress, cancellationToken);
 
         return MapToDto(created);
+    }
+
+    public async Task<ProductionEntryDto> CancelAsync(
+        int productionEntryId, CancelProductionEntryRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken)
+    {
+        var entry = await _repository.GetByIdAsync(productionEntryId, cancellationToken)
+            ?? throw new NotFoundException(nameof(ProductionEntry), productionEntryId);
+
+        if (entry.Status == ProductionEntryStatus.Cancelled)
+        {
+            throw new ConflictException("The production entry is already cancelled.");
+        }
+
+        var reason = string.IsNullOrWhiteSpace(request.Reason) ? null : request.Reason.Trim();
+        var errors = new List<string>();
+        if (reason is null) errors.Add("Reason is required.");
+        else if (reason.Length > 200) errors.Add("Reason must be at most 200 characters.");
+        byte[]? originalRowVersion = null;
+        if (string.IsNullOrWhiteSpace(request.RowVersion)) errors.Add("RowVersion is required.");
+        else
+        {
+            var buffer = new byte[request.RowVersion.Length];
+            if (Convert.TryFromBase64String(request.RowVersion, buffer, out var written) && written > 0) originalRowVersion = buffer[..written];
+            else errors.Add("RowVersion is not valid.");
+        }
+
+        if (errors.Count > 0)
+        {
+            throw new ValidationException(errors);
+        }
+
+        var now = _dateTimeProvider.UtcNow;
+        var shots = 0;
+        var usageBefore = 0;
+        var usageAfter = 0;
+        var moldStatusBefore = string.Empty;
+        var moldStatusAfter = string.Empty;
+
+        var cancelled = await _repository.CancelAsync(productionEntryId, entry.MoldId, originalRowVersion!, (locked, mold) =>
+        {
+            if (locked.Status == ProductionEntryStatus.Cancelled)
+            {
+                throw new ConflictException("The production entry is already cancelled.");
+            }
+
+            // The shots this entry added (its own snapshot), taken back off the mold's CURRENT usage - later entries stay.
+            shots = Math.Max(0, locked.MoldUsageAfter - locked.MoldUsageBefore);
+            usageBefore = mold.CurrentUsageShots;
+            usageAfter = Math.Max(0, mold.CurrentUsageShots - shots);
+            moldStatusBefore = mold.Status;
+            moldStatusAfter = MoldLifeEngine.StatusAfterCancellation(mold.Status, usageAfter, mold.ReplacementShots);
+
+            mold.CurrentUsageShots = usageAfter;
+            mold.Status = moldStatusAfter;
+            mold.UpdatedAt = now;
+            mold.UpdatedBy = actingUserId;
+
+            var note = $"Cancelled: {reason}";
+            var combined = string.IsNullOrEmpty(locked.Remarks) ? note : $"{locked.Remarks} | {note}";
+            locked.Remarks = combined.Length > RemarksMaxLength ? combined[..RemarksMaxLength] : combined;
+            locked.Status = ProductionEntryStatus.Cancelled;
+            locked.UpdatedAt = now;
+            locked.UpdatedBy = actingUserId;
+        }, cancellationToken);
+
+        static string Num(int value) => value.ToString(CultureInfo.InvariantCulture);
+        static string Grouped(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
+
+        var details = new List<AuditLogDetailEntry>
+        {
+            new("status", ProductionEntryStatus.Saved, ProductionEntryStatus.Cancelled),
+            new("mold_usage", Num(usageBefore), Num(usageAfter)),
+            new("reason", null, reason),
+        };
+        if (moldStatusBefore != moldStatusAfter)
+        {
+            details.Add(new AuditLogDetailEntry("mold_status", moldStatusBefore, moldStatusAfter));
+        }
+
+        await WriteAuditAsync(
+            "ProductionEntryCancelled", cancelled, actingUserId, ipAddress,
+            actor => $"{actor} cancelled production entry {cancelled.EntryNo} ({Grouped(cancelled.ProductionQty)} pcs, {Grouped(shots)} shots) on mold " +
+                     $"{cancelled.Mold?.MoldCode}: {reason}. Mold usage corrected from {Grouped(usageBefore)} to {Grouped(usageAfter)} shots." +
+                     (moldStatusBefore != moldStatusAfter ? $" Mold status changed from {moldStatusBefore} to {moldStatusAfter}." : string.Empty),
+            details, cancellationToken);
+
+        return MapToDto(cancelled);
     }
 
     private sealed record ValidInput(

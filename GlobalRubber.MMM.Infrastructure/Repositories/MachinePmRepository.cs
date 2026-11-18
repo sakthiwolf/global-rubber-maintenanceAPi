@@ -190,7 +190,9 @@ public sealed class MachinePmRepository : IMachinePmRepository, IMachinePmNotifi
                 // 4. Machine dates: last maintenance (the PM's machine) and next = earliest open occurrence (every machine).
                 foreach (var machine in lockedMachines)
                 {
-                    plan.ApplyToLockedMachine(machine, await occurrences.OpenDueDatesAsync(machine.MachineId, cancellationToken));
+                    var otherInProgress = await _dbContext.MachinePms.AsNoTracking()
+                        .CountAsync(p => p.MachineId == machine.MachineId && p.MachinePmId != pm.MachinePmId && p.Status == MachinePmStatus.InProgress, cancellationToken);
+                    plan.ApplyToLockedMachine(machine, await occurrences.OpenDueDatesAsync(machine.MachineId, cancellationToken), otherInProgress);
                 }
 
                 await _dbContext.SaveChangesAsync(cancellationToken);
@@ -224,6 +226,80 @@ public sealed class MachinePmRepository : IMachinePmRepository, IMachinePmNotifi
             occurrences.Detach(successor);
             lockedMachines.ForEach(occurrences.Detach);
             lockedMachines.Clear();
+        }
+    }
+
+    public async Task<MachinePm> StartAsync(MachinePm pm, byte[] originalRowVersion, Action<Machine> applyToLockedMachine, CancellationToken cancellationToken)
+    {
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+        var occurrences = new MachinePmOccurrenceWriter(_dbContext, _documentSequence);
+        Machine? machine = null;
+        MachinePm? header = null;
+        byte[] newRowVersion = Array.Empty<byte>();
+        var statusAfter = string.Empty;
+
+        try
+        {
+            await strategy.ExecuteAsync(async () =>
+            {
+                DetachAll(); // a retry must not see the previous attempt's tracking
+
+                var ownsTransaction = _dbContext.Database.CurrentTransaction is null;
+                await using var transaction = ownsTransaction ? await _dbContext.Database.BeginTransactionAsync(cancellationToken) : null;
+
+                // Same lock order as completion: the machine row first, then the PM row.
+                machine = await occurrences.LockMachineAsync(pm.MachineId, cancellationToken);
+
+                header = new MachinePm
+                {
+                    MachinePmId = pm.MachinePmId,
+                    RowVersion = originalRowVersion,
+                    Status = pm.Status,
+                    UpdatedAt = pm.UpdatedAt,
+                    UpdatedBy = pm.UpdatedBy,
+                };
+                var headerEntry = _dbContext.Attach(header);
+                headerEntry.Property(p => p.Status).IsModified = true;
+                headerEntry.Property(p => p.UpdatedAt).IsModified = true;
+                headerEntry.Property(p => p.UpdatedBy).IsModified = true;
+
+                applyToLockedMachine(machine);
+                statusAfter = machine.OperationalStatus;
+
+                try
+                {
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    throw new ConflictException(ConcurrencyMessage); // nothing committed: the transaction rolls back
+                }
+
+                newRowVersion = header.RowVersion;
+
+                if (transaction is not null)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                }
+            });
+        }
+        finally
+        {
+            DetachAll();
+        }
+
+        pm.RowVersion = newRowVersion;
+        if (pm.Machine is not null)
+        {
+            pm.Machine.OperationalStatus = statusAfter;
+        }
+
+        return pm;
+
+        void DetachAll()
+        {
+            if (header is not null) _dbContext.Entry(header).State = EntityState.Detached;
+            if (machine is not null) _dbContext.Entry(machine).State = EntityState.Detached;
         }
     }
 

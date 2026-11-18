@@ -10,6 +10,9 @@ public static class MachinePmAuditNames
     public const string EntityName = "MachinePm";
     public const string Scheduled = "MachinePmScheduled";
 
+    /// <summary>Approved 2026-11-18 (A1): a user started a machine PM (In Progress, machine under Maintenance).</summary>
+    public const string Started = "MachinePmStarted";
+
     /// <summary>Migration 025: a user scheduled a manual (one-time) machine PM.</summary>
     public const string ManualScheduled = "MachinePmManualScheduled";
 }

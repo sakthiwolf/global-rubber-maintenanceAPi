@@ -10,8 +10,8 @@ namespace GlobalRubber.MMM.Api.Controllers;
 /// <summary>
 /// Production entry endpoints (transactions.production_entry_transaction): list, retrieve, form lookups and create -
 /// exactly the analysis' API (18.4). Every endpoint requires a TrnProductionEntry permission (View for reads, Add for
-/// create) via [RequirePermission] - never a role-name check. There is no PUT/DELETE: the analysis defines no edit or
-/// cancel for production entries (6.1, Q-14).
+/// create, Delete for cancel) via [RequirePermission] - never a role-name check. There is no edit; DELETE cancels a wrong
+/// entry (approved 2026-11-18, A4) - its shots are taken back off the mold and the entry stays on record as Cancelled.
 /// </summary>
 [Route("api/v1/production-entries")]
 public sealed class ProductionEntryController : BaseApiController
@@ -89,5 +89,26 @@ public sealed class ProductionEntryController : BaseApiController
             request, GetAuthenticatedUserId(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { id = entry.ProductionEntryId }, ApiResponse<ProductionEntryDto>.Ok(entry, "Production entry saved successfully."));
+    }
+
+    /// <summary>
+    /// CANCELS a saved entry (approved 2026-11-18, A4): Status Cancelled, the shots it added are taken back off the mold and
+    /// the mold status re-evaluated; the entry stays on record but out of the reports. Requires a reason and the rowVersion
+    /// from the last read: 409 if stale or already cancelled.
+    /// </summary>
+    [HttpDelete("{id:int}")]
+    [RequirePermission(ModuleCodes.TrnProductionEntry, PermissionAction.Delete)]
+    [ProducesResponseType(typeof(ApiResponse<ProductionEntryDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ApiResponse<ProductionEntryDto>>> Cancel(int id, [FromBody] CancelProductionEntryRequest request, CancellationToken cancellationToken)
+    {
+        var entry = await _productionEntryService.CancelAsync(
+            id, request, GetAuthenticatedUserId(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+
+        return Ok(ApiResponse<ProductionEntryDto>.Ok(entry, "Production entry cancelled. Its shots were taken off the mold."));
     }
 }

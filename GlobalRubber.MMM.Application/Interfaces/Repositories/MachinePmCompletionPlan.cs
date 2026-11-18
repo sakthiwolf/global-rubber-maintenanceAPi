@@ -21,6 +21,9 @@ public sealed class MachinePmCompletionPlan
     /// </summary>
     public required Func<MaintenanceChecklist?, MachinePm?> BuildSuccessor { get; init; }
 
-    /// <summary>The machine-date rule, applied to every locked machine with the due dates of its open occurrences.</summary>
-    public required Action<Machine, IReadOnlyList<DateOnly>> ApplyToLockedMachine { get; init; }
+    /// <summary>
+    /// The machine-date rule, applied to every locked machine with the due dates of its open occurrences and how many OTHER
+    /// PMs of that machine (not the one being completed) are In Progress - read under the machine lock.
+    /// </summary>
+    public required Action<Machine, IReadOnlyList<DateOnly>, int> ApplyToLockedMachine { get; init; }
 }

@@ -373,9 +373,10 @@ public class MoldPmFlowTests
     {
         var w = Create(m => m.Status = MoldStatus.Available);
         await w.ProduceToAsync(600_000);
+        Assert.Equal(MoldStatus.InProduction, w.Mold.Status); // A3: production puts an Available mold In Production
         await w.CompleteOpenAsync();
 
-        Assert.Equal(MoldStatus.Available, w.Mold.Status);
+        Assert.Equal(MoldStatus.InProduction, w.Mold.Status);
     }
 
     [Fact]

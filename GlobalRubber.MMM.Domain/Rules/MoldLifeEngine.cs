@@ -7,7 +7,7 @@ namespace GlobalRubber.MMM.Domain.Rules;
 /// template implements it (productionService.ts). Q-01 is resolved (approved 2026-11-17): mold usage is counted in
 /// SHOTS - the pieces produced divided by the mold's cavities, rounded up - since one shot makes one piece per cavity
 /// (an LH/RH tool makes both parts in one shot). Still open and kept as the template behaves: only the usage BEFORE the
-/// entry is checked, so one entry may overshoot the limit (Q-13); molds in any status may produce (Q-09).
+/// entry is checked, so one entry may overshoot the limit (Q-13); molds in any status may produce.
 /// </summary>
 public static class MoldLifeEngine
 {
@@ -30,7 +30,8 @@ public static class MoldLifeEngine
     /// <summary>
     /// BR-12 / 8.3: the mold status after a production save.
     /// usage after &gt;= replacement -&gt; Replacement Due; warning &lt;= usage after &lt; replacement -&gt; In Production
-    /// (a Retired mold stays Retired); usage after &lt; warning -&gt; unchanged (Q-10).
+    /// (a Retired mold stays Retired); usage after &lt; warning -&gt; an Available mold becomes In Production (approved
+    /// 2026-11-18, A3 - it is now in use; was Q-10 "unchanged"), any other status is unchanged.
     /// </summary>
     public static string StatusAfterProduction(string currentStatus, int usageAfter, int warningShots, int replacementShots)
     {
@@ -44,6 +45,49 @@ public static class MoldLifeEngine
             return currentStatus == MoldStatus.Retired ? MoldStatus.Retired : MoldStatus.InProduction;
         }
 
-        return currentStatus;
+        return currentStatus == MoldStatus.Available ? MoldStatus.InProduction : currentStatus;
     }
+
+    /// <summary>
+    /// Approved 2026-11-18 (A2): the mold status is system-managed - the only manual choice is Retire / Reactivate.
+    /// On a Mold master save:
+    ///   Retired requested                        -&gt; Retired;
+    ///   currently Retired, nothing else requested -&gt; stays Retired (reactivation must be asked for explicitly);
+    ///   currently Maintenance (a PM in progress)  -&gt; stays Maintenance (the PM's completion releases it);
+    ///   otherwise from the usage: &gt;= replacement -&gt; Replacement Due; &gt; 0 -&gt; In Production; 0 -&gt; Available.
+    /// <paramref name="currentStatus"/> is null on create.
+    /// </summary>
+    public static string StatusAfterMasterSave(string? currentStatus, string? requestedStatus, int usageShots, int replacementShots)
+    {
+        if (requestedStatus == MoldStatus.Retired)
+        {
+            return MoldStatus.Retired;
+        }
+
+        if (currentStatus == MoldStatus.Retired && requestedStatus is null)
+        {
+            return MoldStatus.Retired;
+        }
+
+        if (currentStatus == MoldStatus.Maintenance)
+        {
+            return MoldStatus.Maintenance;
+        }
+
+        return StatusFromUsage(usageShots, replacementShots);
+    }
+
+    /// <summary>
+    /// Approved 2026-11-18 (A4): the mold status after a production entry is CANCELLED and its shots are taken back off.
+    /// Retired and Maintenance stay as they are; otherwise the status follows the new usage (StatusFromUsage), so a mold
+    /// that reached Replacement Due only through the wrong entry becomes usable again.
+    /// </summary>
+    public static string StatusAfterCancellation(string currentStatus, int usageAfterCancel, int replacementShots) =>
+        currentStatus is MoldStatus.Retired or MoldStatus.Maintenance ? currentStatus : StatusFromUsage(usageAfterCancel, replacementShots);
+
+    /// <summary>The usage-derived status (A2): &gt;= replacement -&gt; Replacement Due; &gt; 0 -&gt; In Production; else Available.</summary>
+    public static string StatusFromUsage(int usageShots, int replacementShots) =>
+        usageShots >= replacementShots ? MoldStatus.ReplacementDue
+        : usageShots > 0 ? MoldStatus.InProduction
+        : MoldStatus.Available;
 }

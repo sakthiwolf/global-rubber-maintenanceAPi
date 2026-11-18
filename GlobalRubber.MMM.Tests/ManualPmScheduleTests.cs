@@ -114,7 +114,7 @@ public class ManualPmScheduleTests : IClassFixture<ApiWebApplicationFactory>
 
         var pm = s.Data.Pms.Single();
         await s.MachinePms.CompleteAsync(pm.MachinePmId,
-            new CompleteMachinePmRequest { MaintenanceBy = "Ravi", RowVersion = dto.RowVersion }, 1, null, CancellationToken.None);
+            new CompleteMachinePmRequest { MaintenanceBy = "Ravi", Remarks = "done", RowVersion = dto.RowVersion }, 1, null, CancellationToken.None);
 
         Assert.Equal(MachinePmStatus.Completed, pm.Status);
         Assert.Equal(before, (machine.LastMaintenanceDate, machine.NextMaintenanceDate, machine.MaintenanceFrequencyDays));
@@ -127,7 +127,7 @@ public class ManualPmScheduleTests : IClassFixture<ApiWebApplicationFactory>
         var dto = await ScheduleMachine(s, MachineRequest(date: Today));
 
         var completed = await s.MachinePms.CompleteAsync(dto.MachinePmId,
-            new CompleteMachinePmRequest { MaintenanceBy = "Ravi", RowVersion = dto.RowVersion }, 1, null, CancellationToken.None);
+            new CompleteMachinePmRequest { MaintenanceBy = "Ravi", Remarks = "done", RowVersion = dto.RowVersion }, 1, null, CancellationToken.None);
 
         Assert.Single(s.Data.Pms);
         Assert.Equal(MachinePmStatus.Completed, completed.Status);
@@ -144,7 +144,7 @@ public class ManualPmScheduleTests : IClassFixture<ApiWebApplicationFactory>
         await ScheduleMachine(s, MachineRequest(date: D(2026, 10, 8))); // earlier than the next automatic date
 
         await s.MachinePms.CompleteAsync(occurrence.MachinePmId,
-            new CompleteMachinePmRequest { MaintenanceBy = "Ravi", RowVersion = Convert.ToBase64String(occurrence.RowVersion) }, 1, null, CancellationToken.None);
+            new CompleteMachinePmRequest { MaintenanceBy = "Ravi", Remarks = "done", RowVersion = Convert.ToBase64String(occurrence.RowVersion) }, 1, null, CancellationToken.None);
 
         var successor = Assert.Single(s.Data.Pms, p => p.ChecklistId == plan.ChecklistId && p.Status == MachinePmStatus.Scheduled);
         Assert.Equal(D(2026, 10, 13), successor.ScheduledDate);

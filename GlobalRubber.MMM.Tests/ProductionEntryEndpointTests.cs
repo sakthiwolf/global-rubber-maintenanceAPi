@@ -163,14 +163,24 @@ public class ProductionEntryEndpointTests : IClassFixture<ApiWebApplicationFacto
     }
 
     [Fact]
-    public async Task ThereIsNoUpdateCancelOrDeleteEndpoint_Q14()
+    public async Task ThereIsNoUpdate_ButDeleteCancelsWithAReason_A4()
     {
         var h = CreateHarness();
-        await h.Client.PostAsync(Url, Json(Body()));
+        var created = await h.Client.PostAsync(Url, Json(Body()));
+        using var createdDoc = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        var rowVersion = createdDoc.RootElement.GetProperty("data").GetProperty("rowVersion").GetString();
 
         Assert.Equal(HttpStatusCode.MethodNotAllowed, (await h.Client.PutAsync($"{Url}/1", Json(Body()))).StatusCode);
-        Assert.Equal(HttpStatusCode.MethodNotAllowed, (await h.Client.DeleteAsync($"{Url}/1")).StatusCode);
+
+        var noReason = new HttpRequestMessage(HttpMethod.Delete, $"{Url}/1") { Content = Json(JsonSerializer.Serialize(new { reason = " ", rowVersion })) };
+        Assert.Equal(HttpStatusCode.BadRequest, (await h.Client.SendAsync(noReason)).StatusCode);
         Assert.Equal("Saved", h.Entries.Stored(1).Status);
+
+        var cancel = new HttpRequestMessage(HttpMethod.Delete, $"{Url}/1") { Content = Json(JsonSerializer.Serialize(new { reason = "wrong quantity", rowVersion })) };
+        var response = await h.Client.SendAsync(cancel);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Cancelled", h.Entries.Stored(1).Status);
+        Assert.Equal(PermissionAction.Delete, h.Authorization.Checks.Last().Action);
     }
 
     // ================================================================ GET

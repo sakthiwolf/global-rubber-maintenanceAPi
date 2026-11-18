@@ -26,4 +26,7 @@ public interface IProductionEntryService
     /// <exception cref="GlobalRubber.MMM.Application.Common.NotFoundException">The machine, product or mold does not exist.</exception>
     /// <exception cref="GlobalRubber.MMM.Application.Common.ConflictException">The mold has reached its replacement limit.</exception>
     Task<ProductionEntryDto> CreateAsync(CreateProductionEntryRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken);
+
+    /// <summary>Cancels a saved entry and takes its shots back off the mold (A4). 409 if already cancelled or stale.</summary>
+    Task<ProductionEntryDto> CancelAsync(int productionEntryId, CancelProductionEntryRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken);
 }

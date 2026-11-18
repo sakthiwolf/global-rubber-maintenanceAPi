@@ -14,10 +14,10 @@ namespace GlobalRubber.MMM.Application.Services;
 /// <summary>
 /// Machine Preventive Maintenance - recurring occurrences driven by the Maintenance Checklist (approved 2026-09-25).
 /// Occurrences are created only by the checklist (first occurrence) and by completion (the successor); there is no manual
-/// scheduling, start step, engineer assignment, edit, cancel or delete.
+/// scheduling, engineer assignment, edit, cancel or delete. Start (approved 2026-11-18, A1) is optional.
 ///
 /// Completion (Function 5): Maintenance By is required (free text, at most 100, trimmed - not an employee); unchecked items
-/// are allowed (Q-17); the PM becomes Completed on today's plant date keeping its due date, machine, checklist and number.
+/// are allowed only with Remarks (approved 2026-11-18, A7; was Q-17); the PM becomes Completed on today's plant date keeping its due date, machine, checklist and number.
 /// In the SAME transaction: if its checklist is still an ACTIVE MACHINE checklist with a frequency and a machine, exactly
 /// ONE successor is created, due on RecurrenceRules.NextDueAfterCompletion(start date, frequency, due date, completion date)
 /// (original cycle, missed dates skipped, never the same occurrence again), with a snapshot of the checklist's CURRENT
@@ -91,6 +91,60 @@ public sealed class MachinePmService : IMachinePmService
         return MachinePmCalendarBuilder.Build(y, today, plans, jobs);
     }
 
+    /// <summary>
+    /// Approved 2026-11-18 (A1): Start Maintenance - a Scheduled PM becomes In Progress and its machine goes under
+    /// Maintenance (MachinePmRules.OperationalStatusAfterStart), in one transaction with the machine row locked. Completing
+    /// it later returns the machine to Running. Starting is optional: a Scheduled PM can still be completed directly.
+    /// </summary>
+    public async Task<MachinePmDto> StartAsync(
+        int machinePmId, StartMachinePmRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken)
+    {
+        var pm = await _repository.GetByIdAsync(machinePmId, cancellationToken)
+            ?? throw new NotFoundException(nameof(MachinePm), machinePmId);
+
+        if (pm.Status != MachinePmStatus.Scheduled)
+        {
+            throw new ConflictException(pm.Status == MachinePmStatus.Completed
+                ? "The maintenance record is already completed."
+                : "The maintenance has already been started.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.RowVersion)) throw new ValidationException("RowVersion is required.");
+        if (!TryDecodeRowVersion(request.RowVersion, out var originalRowVersion)) throw new ValidationException("RowVersion is not valid.");
+
+        var now = _dateTimeProvider.UtcNow;
+        pm.Status = MachinePmStatus.InProgress;
+        pm.UpdatedAt = now;
+        pm.UpdatedBy = actingUserId;
+
+        var machineStatusBefore = string.Empty;
+        var machineCode = string.Empty;
+        var started = await _repository.StartAsync(pm, originalRowVersion!, machine =>
+        {
+            machineStatusBefore = machine.OperationalStatus;
+            machineCode = machine.MachineCode;
+            var after = MachinePmRules.OperationalStatusAfterStart(machine.OperationalStatus);
+            if (after != machine.OperationalStatus)
+            {
+                machine.OperationalStatus = after;
+                machine.UpdatedAt = now;
+                machine.UpdatedBy = actingUserId;
+            }
+        }, cancellationToken);
+
+        var machineStatusAfter = MachinePmRules.OperationalStatusAfterStart(machineStatusBefore);
+        var details = new List<AuditLogDetailEntry> { new("status", MachinePmStatus.Scheduled, MachinePmStatus.InProgress) };
+        if (machineStatusBefore != machineStatusAfter)
+        {
+            details.Add(new AuditLogDetailEntry($"machine_operational_status ({machineCode})", machineStatusBefore, machineStatusAfter));
+        }
+
+        await WriteAuditAsync(MachinePmAuditNames.Started, started, actingUserId, ipAddress,
+            actor => $"{actor} started machine PM {started.PmNo} for machine {machineCode}.", details, cancellationToken);
+
+        return MapToDto(started);
+    }
+
     public async Task<MachinePmDto> CompleteAsync(
         int machinePmId, CompleteMachinePmRequest request, int? actingUserId, string? ipAddress, CancellationToken cancellationToken)
     {
@@ -116,6 +170,13 @@ public sealed class MachinePmService : IMachinePmService
         if (remarks is { Length: > RemarksMaxLength }) errors.Add($"Remarks must be at most {RemarksMaxLength} characters.");
         if (results.Any(r => !lineIds.Contains(r.MachinePmChecklistId))) errors.Add("A checklist result does not belong to this maintenance record.");
         if (results.GroupBy(r => r.MachinePmChecklistId).Any(g => g.Count() > 1)) errors.Add("A checklist item is listed more than once.");
+        // Approved 2026-11-18 (A7): a check point may be left unticked only with a reason - Remarks then become required.
+        var tickedIds = results.Where(r => r.IsChecked).Select(r => r.MachinePmChecklistId).ToHashSet();
+        var uncheckedCount = pm.ChecklistItems.Count(i => !tickedIds.Contains(i.MachinePmChecklistId));
+        if (uncheckedCount > 0 && remarks is null)
+        {
+            errors.Add($"{uncheckedCount} checklist item(s) are not ticked. Tick them, or enter Remarks explaining why they were not done.");
+        }
         if (errors.Count > 0)
         {
             throw new ValidationException(errors);
@@ -160,7 +221,7 @@ public sealed class MachinePmService : IMachinePmService
                     : null;
                 return successor;
             },
-            ApplyToLockedMachine = (machine, openDueDates) =>
+            ApplyToLockedMachine = (machine, openDueDates, otherPmsInProgress) =>
             {
                 var lastBefore = machine.LastMaintenanceDate;
                 var nextBefore = machine.NextMaintenanceDate;
@@ -173,7 +234,7 @@ public sealed class MachinePmService : IMachinePmService
                         machine.LastMaintenanceDate = today;
                     }
 
-                    machine.OperationalStatus = MachinePmRules.OperationalStatusAfterCompletion(machine.OperationalStatus);
+                    machine.OperationalStatus = MachinePmRules.OperationalStatusAfterCompletion(machine.OperationalStatus, otherPmsInProgress);
                 }
 
                 // Migration 025: completing a manual (one-time) PM leaves the machine's normal next date as it is.

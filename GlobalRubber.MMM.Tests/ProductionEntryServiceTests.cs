@@ -89,7 +89,7 @@ public class ProductionEntryServiceTests
 
         var mold = s.Entries.StoredMold(1);
         Assert.Equal(101_200, mold.CurrentUsageShots);
-        Assert.Equal(MoldStatus.Available, mold.Status); // below warning -> unchanged (8.3)
+        Assert.Equal(MoldStatus.InProduction, mold.Status); // A3: below warning, an Available mold is now In Production
         Assert.Equal((FixedClock.Now, (int?)1), (mold.UpdatedAt!.Value, mold.UpdatedBy));
 
         var entry = Assert.Single(s.Audit.Entries);
@@ -103,7 +103,7 @@ public class ProductionEntryServiceTests
         Assert.Contains("(1,200 shots, 1 cavities)", entry.Description);
         Assert.Contains("Mold usage updated from 100,000 to 101,200 shots.", entry.Description);
         Assert.Contains(entry.Details, d => d is { FieldName: "mold_usage", OldValue: "100000", NewValue: "101200" });
-        Assert.DoesNotContain(entry.Details, d => d.FieldName == "mold_status");
+        Assert.Contains(entry.Details, d => d is { FieldName: "mold_status", OldValue: "Available", NewValue: "In Production" }); // A3
     }
 
     [Fact]
@@ -275,7 +275,8 @@ public class ProductionEntryServiceTests
     }
 
     [Theory]
-    [InlineData(MoldStatus.Available, 100, MoldStatus.Available)]
+    [InlineData(MoldStatus.Available, 100, MoldStatus.InProduction)] // A3: in use = In Production
+    [InlineData(MoldStatus.ReplacementDue, 100, MoldStatus.ReplacementDue)]
     [InlineData(MoldStatus.Maintenance, 449_999, MoldStatus.Maintenance)]
     [InlineData(MoldStatus.Available, 450_000, MoldStatus.InProduction)]
     [InlineData(MoldStatus.Maintenance, 499_999, MoldStatus.InProduction)]

@@ -48,6 +48,9 @@ public sealed class ProductionMoldLookupDto
     /// <summary>Normal / Warning / Replace (computed by SQL Server).</summary>
     public string LifeState { get; init; } = string.Empty;
 
+    /// <summary>Where the mold is - the machine it runs on (free text); the entry form pre-selects that machine (C1).</summary>
+    public string? Location { get; init; }
+
     /// <summary>The mold's status (Available / In Production / Maintenance / Replacement Due / Retired).</summary>
     public string Status { get; init; } = string.Empty;
 }

@@ -1,3 +1,4 @@
+using GlobalRubber.MMM.Application.Common;
 using GlobalRubber.MMM.Application.DTOs;
 using GlobalRubber.MMM.Application.Interfaces.Repositories;
 using GlobalRubber.MMM.Domain.Constants;
@@ -152,4 +153,38 @@ internal sealed class InMemoryProductionEntryRepository : IProductionEntryReposi
         entry.Mold = stored;
         return entry;
     }
+
+    public Task<ProductionEntry> CancelAsync(
+        int productionEntryId, int moldId, byte[] originalRowVersion, Action<ProductionEntry, Mold> applyToLocked, CancellationToken cancellationToken)
+    {
+        var stored = _entries.Single(e => e.ProductionEntryId == productionEntryId);
+        if (!stored.RowVersion.SequenceEqual(originalRowVersion))
+        {
+            throw new ConflictException("The production entry was modified by another user. Refresh it and try again.");
+        }
+
+        var storedMold = _molds.Single(m => m.MoldId == moldId);
+        var mold = new Mold
+        {
+            MoldId = storedMold.MoldId, MoldCode = storedMold.MoldCode, ReplacementShots = storedMold.ReplacementShots, WarningShots = storedMold.WarningShots,
+            CurrentUsageShots = storedMold.CurrentUsageShots, Status = storedMold.Status,
+        };
+        var locked = Clone(stored);
+        applyToLocked(locked, mold); // may throw: nothing below happens
+
+        stored.Status = locked.Status;
+        stored.Remarks = locked.Remarks;
+        stored.UpdatedAt = locked.UpdatedAt;
+        stored.UpdatedBy = locked.UpdatedBy;
+        stored.RowVersion = new[] { (byte)(stored.RowVersion[0] + 1) };
+        storedMold.CurrentUsageShots = mold.CurrentUsageShots;
+        storedMold.Status = mold.Status;
+        storedMold.UpdatedAt = mold.UpdatedAt;
+        storedMold.UpdatedBy = mold.UpdatedBy;
+
+        var result = Clone(stored);
+        result.Mold = storedMold;
+        return Task.FromResult(result);
+    }
+
 }

@@ -32,3 +32,15 @@ public sealed class CreateProductionEntryRequest
     /// <summary>Optional, at most 500 characters (NVARCHAR(500)).</summary>
     public string? Remarks { get; init; }
 }
+
+/// <summary>
+/// Body of DELETE /api/v1/production-entries/{id} (approved 2026-11-18, A4): CANCELS a saved entry - its shots are taken
+/// back off the mold and the entry is kept with Status Cancelled.
+/// </summary>
+public sealed class CancelProductionEntryRequest
+{
+    /// <summary>Required - why the entry is cancelled (e.g. "wrong quantity, re-entered as PROD-0123").</summary>
+    public string? Reason { get; init; }
+
+    public string? RowVersion { get; init; }
+}

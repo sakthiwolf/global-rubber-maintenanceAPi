@@ -12,8 +12,8 @@ namespace GlobalRubber.MMM.Api.Controllers;
 /// tab counts, details, lookups and complete. Automatic occurrences are created by the Maintenance Checklist (first
 /// occurrence) and by completion (the successor); POST .../manual schedules ONE manual (one-time) PM (migration 025). Every
 /// endpoint requires a TrnMachinePm permission via [RequirePermission] - never a role-name check: View for reads, Add for
-/// the manual schedule, Edit to complete (PUT because every POST in the API is an Add). No start, edit, cancel or delete
-/// endpoint.
+/// the manual schedule, Edit to start and complete (PUT because every POST in the API is an Add). No edit, cancel or
+/// delete endpoint.
 /// </summary>
 [Route("api/v1/machine-maintenance")]
 public sealed class MachinePmController : BaseApiController
@@ -123,6 +123,28 @@ public sealed class MachinePmController : BaseApiController
         var pm = await _machinePmService.GetByIdAsync(id, cancellationToken);
 
         return Ok(ApiResponse<MachinePmDto>.Ok(pm, "Machine maintenance record retrieved successfully."));
+    }
+
+    /// <summary>
+    /// Start Maintenance (approved 2026-11-18, A1): a Scheduled PM becomes In Progress and the machine's operational status
+    /// becomes Maintenance (a machine in Breakdown stays in Breakdown). Requires the rowVersion from the last read: 409 if
+    /// it changed since, or if the PM is not Scheduled.
+    /// </summary>
+    [HttpPut("{id:int}/start")]
+    [RequirePermission(ModuleCodes.TrnMachinePm, PermissionAction.Edit)]
+    [ProducesResponseType(typeof(ApiResponse<MachinePmDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ApiResponse<MachinePmDto>>> Start(
+        int id, [FromBody] StartMachinePmRequest request, CancellationToken cancellationToken)
+    {
+        var pm = await _machinePmService.StartAsync(
+            id, request, GetAuthenticatedUserId(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+
+        return Ok(ApiResponse<MachinePmDto>.Ok(pm, "Maintenance started successfully."));
     }
 
     /// <summary>

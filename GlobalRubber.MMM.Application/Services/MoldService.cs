@@ -24,8 +24,11 @@ namespace GlobalRubber.MMM.Application.Services;
 /// - a new mold starts at 0 usage; a mold already in production is created with an opening balance (opening usage, its
 ///   date, optionally the usage at its last PM - which anchors the PM cycle), audited and PM-evaluated in the insert's
 ///   transaction; afterwards usage can be corrected on edit only (BR-14) and is always audited with old/new values;
-/// - status: any of the five values on create and edit, as in the template (which values may be set manually is open
-///   question Q-09). "Deactivate" (DELETE) sets Status = Retired - the table has no is_active column.
+/// - status (approved 2026-11-18, A2): system-managed - MoldLifeEngine.StatusAfterMasterSave. The request's Status is
+///   optional and only "Retired" (retire) or, for a Retired mold, any other value (reactivate) has an effect.
+///   "Deactivate" (DELETE) sets Status = Retired - the table has no is_active column.
+/// - Maximum Shots is optional (approved 2026-11-18, A5): blank = the replacement shots, so life % is measured against the
+///   limit that blocks production.
 /// Life state / life % / remaining shots follow section 8.2.
 /// Usage-based PM (migration 014): Maintenance Frequency (shots) is the PM interval (blank = disabled, else &gt; 0); the PM
 /// warning margin is optional and, when entered, needs an interval, &gt; 0 and below it. The cycle start is system-managed.
@@ -97,6 +100,7 @@ public sealed class MoldService : IMoldService
             request, currentUsage: request.OpeningUsageShots ?? 0, rowVersion: null, requireRowVersion: false, out _,
             createToday: _dateTimeProvider.Today);
         var opening = fields.Opening;
+        fields = fields with { Status = MoldLifeEngine.StatusAfterMasterSave(null, fields.Status, opening?.UsageShots ?? 0, fields.ReplacementShots) };
 
         var product = await LoadAssignableProductAsync(fields.ProductId, cancellationToken);
         var person = fields.ResponsibleEmployeeId is { } personId
@@ -130,7 +134,7 @@ public sealed class MoldService : IMoldService
             PmCycleStartShots = opening?.CycleStartShots ?? 0, // new mold: the first cycle's threshold is the interval itself
             CurrentUsageShots = opening?.UsageShots ?? 0,
             ResponsibleEmployeeId = person?.EmployeeId,
-            Status = fields.Status,
+            Status = fields.Status!,
             Remarks = fields.Remarks,
             CreatedAt = _dateTimeProvider.UtcNow,
             CreatedBy = actingUserId,
@@ -189,6 +193,7 @@ public sealed class MoldService : IMoldService
 
         var fields = NormalizeAndValidate(
             request, request.CurrentUsageShots ?? mold.CurrentUsageShots, request.RowVersion, requireRowVersion: true, out var originalRowVersion);
+        fields = fields with { Status = MoldLifeEngine.StatusAfterMasterSave(mold.Status, fields.Status, fields.CurrentUsageShots, fields.ReplacementShots) };
 
         // Keeping the current product / person is always allowed (even if since deactivated - the form shows it flagged
         // instead of silently clearing it); choosing a different one requires an existing, active one.
@@ -258,7 +263,7 @@ public sealed class MoldService : IMoldService
         mold.PmWarningShots = fields.PmWarningShots;
         mold.CurrentUsageShots = fields.CurrentUsageShots;
         mold.ResponsibleEmployeeId = person?.EmployeeId;
-        mold.Status = fields.Status;
+        mold.Status = fields.Status!;
         mold.Remarks = fields.Remarks;
         mold.UpdatedAt = _dateTimeProvider.UtcNow;
         mold.UpdatedBy = actingUserId;
@@ -359,7 +364,7 @@ public sealed class MoldService : IMoldService
         string Name, int ProductId, string MoldType, int CavityCount, string? Manufacturer, string? SerialNumber,
         string? Location, string? StorageLocation, DateOnly? CommissionDate, int MaximumShots, int WarningShots,
         int ReplacementShots, int? MaintenanceFrequencyShots, int? PmWarningShots, int CurrentUsageShots, int? ResponsibleEmployeeId,
-        string Status, string? Remarks, string? PartNo, string? PartDescription, string? Ownership, OpeningBalance? Opening = null);
+        string? Status, string? Remarks, string? PartNo, string? PartDescription, string? Ownership, OpeningBalance? Opening = null);
 
     /// <summary>The validated opening balance of a mold already in production (create only).</summary>
     private sealed record OpeningBalance(int UsageShots, DateOnly Date, int? UsageAtLastPmShots, int CycleStartShots);
@@ -416,13 +421,14 @@ public sealed class MoldService : IMoldService
         if (cavityCount < 1) errors.Add("CavityCount must be at least 1."); // CK_mold_master_cavity_count
 
         // Life thresholds: the three CK constraints, with the template's messages (analysis 4.2 / validation table).
-        if (request.MaximumShots is null) errors.Add("MaximumShots is required.");
+        // A5 (approved 2026-11-18): Maximum Shots is optional - blank means the replacement shots (the limit that blocks).
+        var maximumShots = request.MaximumShots ?? request.ReplacementShots;
         if (request.WarningShots is null) errors.Add("WarningShots is required.");
         if (request.ReplacementShots is null) errors.Add("ReplacementShots is required.");
-        if (request.MaximumShots is { } max && max <= 0) errors.Add("Maximum shots must be greater than 0.");
-        if (request is { MaximumShots: { } m, WarningShots: { } w } && w >= m) errors.Add("Warning level must be less than maximum life.");
+        if (maximumShots is { } max && max <= 0) errors.Add("Maximum shots must be greater than 0.");
+        if (maximumShots is { } m && request.WarningShots is { } w && w >= m) errors.Add("Warning level must be less than maximum life.");
         if (request is { WarningShots: { } w2, ReplacementShots: { } r } && r <= w2) errors.Add("Replacement level must be greater than warning level.");
-        if (request is { MaximumShots: { } m2, ReplacementShots: { } r2 } && r2 > m2) errors.Add("Replacement level cannot exceed maximum shots.");
+        if (maximumShots is { } m2 && request.ReplacementShots is { } r2 && r2 > m2) errors.Add("Replacement level cannot exceed maximum shots.");
 
         // On create the usage is the opening usage, validated (with its own message) below.
         if (createToday is null && currentUsage < 0) errors.Add("CurrentUsageShots cannot be negative."); // CK_mold_master_current_usage_shots
@@ -442,8 +448,8 @@ public sealed class MoldService : IMoldService
             else if (request.MaintenanceFrequencyShots > 0 && pmWarning >= request.MaintenanceFrequencyShots) errors.Add("PM warning shots must be less than the maintenance frequency (shots).");
         }
 
-        if (statusInput is null) errors.Add("Status is required.");
-        else if (status is null) errors.Add($"Status must be one of: {string.Join(", ", MoldStatus.All)}.");
+        // A2: optional (system-managed); when given it must still be a known value.
+        if (statusInput is not null && status is null) errors.Add($"Status must be one of: {string.Join(", ", MoldStatus.All)}.");
 
         originalRowVersion = null;
         if (requireRowVersion)
@@ -465,8 +471,8 @@ public sealed class MoldService : IMoldService
 
         return new MoldFields(
             name, request.ProductId, moldType, cavityCount, manufacturer, serialNumber, location, storageLocation,
-            request.CommissionDate, request.MaximumShots!.Value, request.WarningShots!.Value, request.ReplacementShots!.Value,
-            request.MaintenanceFrequencyShots, request.PmWarningShots, currentUsage, request.ResponsibleEmployeeId, status!, remarks,
+            request.CommissionDate, maximumShots!.Value, request.WarningShots!.Value, request.ReplacementShots!.Value,
+            request.MaintenanceFrequencyShots, request.PmWarningShots, currentUsage, request.ResponsibleEmployeeId, status, remarks,
             partNo, partDescription, ownership, opening);
     }
 

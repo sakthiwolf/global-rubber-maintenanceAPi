@@ -3,8 +3,8 @@ namespace GlobalRubber.MMM.Domain.Constants;
 /// <summary>
 /// masters.mold_master.status values, exactly as CK_mold_master_status allows them (default 'Available',
 /// DF_mold_master_status). The mold table has no is_active column: 'Retired' plays that role (see
-/// database/scripts/005_create_master_tables.sql). Which values may be set manually is open question Q-09 - the template
-/// allows any of the five on create and edit, and that is what is implemented.
+/// database/scripts/005_create_master_tables.sql). Approved 2026-11-18 (A2, replacing Q-09): the status is system-managed
+/// (MoldLifeEngine.StatusAfterMasterSave / StatusAfterProduction, Mold PM start/complete); only Retire / Reactivate is manual.
 /// </summary>
 public static class MoldStatus
 {
